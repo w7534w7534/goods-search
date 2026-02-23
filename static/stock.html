@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票分析 — 台股資訊查詢</title>
+    <meta name="description" content="台灣股票技術分析、籌碼面分析、基本面分析">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+
+<body>
+    <!-- 主題切換 -->
+    <button class="theme-toggle" id="themeToggle" title="切換主題">🌙</button>
+
+    <!-- Toast 通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="dashboard">
+        <!-- 頂部導航 -->
+        <header class="dash-header">
+            <div style="display:flex; align-items:center; gap:1.5rem; flex-wrap:wrap;">
+                <a href="/" class="dash-back">← 返回搜尋</a>
+                <div class="dash-stock-info">
+                    <span class="dash-stock-name" id="stockName">載入中...</span>
+                    <span class="dash-stock-id" id="stockId"></span>
+                </div>
+                <button class="watchlist-btn" id="watchlistBtn" title="加入自選股">☆</button>
+            </div>
+            <div class="dash-stock-price">
+                <span class="price-current" id="priceValue">—</span>
+                <span class="price-change" id="priceChange">—</span>
+            </div>
+        </header>
+
+        <!-- 資訊卡片列 -->
+        <div class="info-cards" id="infoCards">
+            <div class="stat-card">
+                <div class="stat-label">本益比</div>
+                <div class="stat-value" id="perValue">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">本淨比</div>
+                <div class="stat-value" id="pbrValue">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">殖利率</div>
+                <div class="stat-value" id="yieldValue">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">成交量</div>
+                <div class="stat-value" id="volumeValue">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最高</div>
+                <div class="stat-value" id="highValue">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最低</div>
+                <div class="stat-value" id="lowValue">—</div>
+            </div>
+        </div>
+
+        <!-- 日期區間 + 匯出 -->
+        <div class="date-range-picker">
+            <button class="date-range-btn" data-range="1m">1 個月</button>
+            <button class="date-range-btn" data-range="3m">3 個月</button>
+            <button class="date-range-btn active" data-range="6m">6 個月</button>
+            <button class="date-range-btn" data-range="1y">1 年</button>
+            <button class="date-range-btn" data-range="2y">2 年</button>
+            <button class="date-range-btn" data-range="5y">5 年</button>
+            <div style="margin-left:auto; display:flex; gap:0.5rem;">
+                <button class="export-btn" id="exportCsv" title="匯出 CSV">📥 CSV</button>
+                <button class="export-btn" id="exportPng" title="匯出圖表">📸 圖表</button>
+            </div>
+        </div>
+
+        <!-- K 線圖 -->
+        <div class="glass-card">
+            <div class="card-title">
+                <span class="icon">📈</span> 技術分析圖
+            </div>
+            <div class="indicator-toggles" id="indicatorToggles">
+                <button class="indicator-btn active" data-indicator="ma">MA 均線</button>
+                <button class="indicator-btn" data-indicator="bb">布林通道</button>
+                <button class="indicator-btn" data-indicator="vwap">VWAP</button>
+            </div>
+            <div class="chart-container" id="klineChart"></div>
+        </div>
+
+        <!-- 子指標 -->
+        <div class="glass-card">
+            <div class="card-title">
+                <span class="icon">📐</span> 技術指標
+            </div>
+            <div class="indicator-toggles" id="subIndicatorToggles">
+                <button class="indicator-btn active" data-indicator="macd">MACD</button>
+                <button class="indicator-btn active green" data-indicator="rsi">RSI</button>
+                <button class="indicator-btn active purple" data-indicator="kd">KD</button>
+                <button class="indicator-btn orange" data-indicator="obv">OBV</button>
+                <button class="indicator-btn pink" data-indicator="dmi">DMI</button>
+                <button class="indicator-btn" data-indicator="wr">W%R</button>
+            </div>
+            <div class="chart-container medium" id="indicatorChart"></div>
+        </div>
+
+        <!-- 籌碼面 + 基本面 -->
+        <div class="grid-2">
+            <div class="glass-card">
+                <div class="card-title">
+                    <span class="icon">🏛️</span> 籌碼面分析
+                </div>
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="institutional">三大法人</button>
+                    <button class="tab-btn" data-tab="holders">大戶持股</button>
+                    <button class="tab-btn" data-tab="margin">融資融券</button>
+                </div>
+                <div class="tab-content active" id="tab-institutional">
+                    <div class="chart-container small" id="institutionalChart"></div>
+                </div>
+                <div class="tab-content" id="tab-holders">
+                    <div class="chart-container small" id="holdersChart"></div>
+                </div>
+                <div class="tab-content" id="tab-margin">
+                    <div class="chart-container small" id="marginChart"></div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-title">
+                    <span class="icon">💰</span> 基本面分析
+                </div>
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="dividend">股利政策</button>
+                    <button class="tab-btn" data-tab="revenue">營收趨勢</button>
+                    <button class="tab-btn" data-tab="financial">獲利能力</button>
+                </div>
+                <div class="tab-content active" id="tab-dividend">
+                    <div class="table-wrapper" id="dividendTable"></div>
+                </div>
+                <div class="tab-content" id="tab-revenue">
+                    <div class="chart-container small" id="revenueChart"></div>
+                </div>
+                <div class="tab-content" id="tab-financial">
+                    <div class="chart-container small" id="financialChart"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/chart.js"></script>
+    <script src="/js/chip.js"></script>
+    <script src="/js/fundamental.js"></script>
+    <script src="/js/stock.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股資訊查詢工具</title>
+    <meta name="description" content="台灣股票資訊查詢工具，提供技術分析、籌碼面、基本面等完整股市資訊">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+</head>
+
+<body>
+    <!-- 主題切換 -->
+    <button class="theme-toggle" id="themeToggle" title="切換主題">🌙</button>
+
+    <!-- Toast 通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <main class="hero">
+        <div class="hero-logo">📊</div>
+        <h1 class="hero-title">台股資訊查詢</h1>
+        <p class="hero-subtitle">輸入股票名稱或代號，即時查看技術分析、籌碼面、基本面資訊</p>
+
+        <div class="search-container">
+            <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchInput" class="search-input" placeholder="搜尋股票名稱或代號，例如：2330、台積電..."
+                    autocomplete="off" autofocus>
+                <button class="search-btn" id="searchBtn">查詢</button>
+            </div>
+            <div class="autocomplete-dropdown" id="autocompleteDropdown"></div>
+        </div>
+
+        <!-- 自選股清單 -->
+        <div class="watchlist-section" id="watchlistSection" style="display:none;">
+            <div class="hot-stocks-label">⭐ 我的自選股</div>
+            <div class="hot-stocks-grid" id="watchlistGrid"></div>
+        </div>
+
+        <div class="hot-stocks">
+            <div class="hot-stocks-label">🔥 熱門股票</div>
+            <div class="hot-stocks-grid">
+                <a class="hot-stock-chip" href="/stock?id=2330&name=台積電">
+                    <span class="chip-id">2330</span> 台積電
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2317&name=鴻海">
+                    <span class="chip-id">2317</span> 鴻海
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2454&name=聯發科">
+                    <span class="chip-id">2454</span> 聯發科
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2412&name=中華電">
+                    <span class="chip-id">2412</span> 中華電
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2881&name=富邦金">
+                    <span class="chip-id">2881</span> 富邦金
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2882&name=國泰金">
+                    <span class="chip-id">2882</span> 國泰金
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2303&name=聯電">
+                    <span class="chip-id">2303</span> 聯電
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=3008&name=大立光">
+                    <span class="chip-id">3008</span> 大立光
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=2886&name=兆豐金">
+                    <span class="chip-id">2886</span> 兆豐金
+                </a>
+                <a class="hot-stock-chip" href="/stock?id=0050&name=元大台灣50">
+                    <span class="chip-id">0050</span> 元大台灣50
+                </a>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/app.js"></script>
+</body>
+
+</html>
