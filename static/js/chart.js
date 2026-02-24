@@ -170,7 +170,9 @@ function renderKlineChart() {
                 let html = `<div style="font-weight:600;margin-bottom:6px;">${date}</div>`;
                 const kline = params.find(p => p.seriesName === 'K線');
                 if (kline) {
-                    const [open, close, low, high] = kline.data;
+                    // ECharts candlestick: kline.value = [index, open, close, low, high]
+                    // 跳過第一個 category index
+                    const [, open, close, low, high] = kline.value;
                     const change = ((close - open) / open * 100).toFixed(2);
                     const color = close >= open ? '#ef4444' : '#10b981';
                     html += `<div>開盤: <b>${open}</b> 收盤: <b style="color:${color}">${close}</b></div>`;
