@@ -181,10 +181,9 @@ function getDateRange() {
         case '5y': start.setFullYear(start.getFullYear() - 5); break;
         default: start.setMonth(start.getMonth() - 6);
     }
-    return {
-        start: start.toISOString().split('T')[0],
-        end: end.toISOString().split('T')[0],
-    };
+    // 使用本地時間而非 UTC，避免 UTC+8 凌晨少一天
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { start: fmt(start), end: fmt(end) };
 }
 
 // ============================================================
@@ -253,6 +252,12 @@ async function loadAllData() {
 
             updatePriceDisplay(latest, prev);
             updateInfoCards(latest, perResp);
+
+            // 顯示資料截至日期
+            const dataDateEl = document.getElementById('dataDate');
+            if (dataDateEl) {
+                dataDateEl.textContent = `資料截至 ${latest.date}`;
+            }
 
             if (indResp) {
                 initKlineChart(priceData, indResp);

@@ -1063,3 +1063,11 @@ body::before {
     border-color: var(--accent-blue);
     color: var(--accent-blue);
 }
+
+/* 資料截至日期提示 */
+.data-date {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 0.75rem;
+    font-weight: 400;
+}

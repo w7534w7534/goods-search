@@ -311,9 +311,11 @@ def stock_indicators():
         ma = ta.trend.SMAIndicator(close, window=period)
         result[f'ma{period}'] = ma.sma_indicator().round(2).tolist()
 
-    # VWAP（每日累計）
+    # VWAP（20 日滾動）
     typical_price = (high + low + close) / 3
-    vwap = (typical_price * volume).cumsum() / volume.cumsum()
+    vwap_window = 20
+    vwap = (typical_price * volume).rolling(window=vwap_window, min_periods=1).sum() / \
+           volume.rolling(window=vwap_window, min_periods=1).sum()
     result['vwap'] = vwap.round(2).tolist()
 
     # DMI (14)
@@ -476,8 +478,10 @@ def stock_dividend():
     if not stock_id:
         return api_error("缺少股票代號")
 
+    # 動態回溯 10 年
+    start_10y = (datetime.now() - timedelta(days=3650)).strftime("%Y-%m-%d")
     data = finmind_request("TaiwanStockDividend",
-                           data_id=stock_id, start_date="2015-01-01")
+                           data_id=stock_id, start_date=start_10y)
     return api_ok(data)
 
 
@@ -542,7 +546,7 @@ def stock_per():
     if not stock_id:
         return api_error("缺少股票代號")
     if not start_date or not end_date:
-        start_date, end_date = get_default_dates(1)
+        start_date, end_date = get_default_dates(3)
 
     data = finmind_request("TaiwanStockPER",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
