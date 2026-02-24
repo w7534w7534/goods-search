@@ -266,6 +266,11 @@ async function loadAllData() {
                     echarts.connect([klineChartInstance, indicatorChartInstance]);
                 }
             }
+
+            // 啟動即時報價輪詢
+            if (typeof startRealtimePolling === 'function') {
+                startRealtimePolling(id);
+            }
         } else if (Array.isArray(priceResp) && priceResp.length > 0) {
             // 舊格式相容：直接是陣列
             const latest = priceResp[priceResp.length - 1];

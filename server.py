@@ -15,7 +15,7 @@ import logging
 import os
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 from threading import Lock
 
 from flask import Flask, jsonify, request, send_from_directory, Response
@@ -103,6 +103,9 @@ class SimpleCache:
 # API 快取（5 分鐘 TTL）
 api_cache = SimpleCache(maxsize=200, ttl=300)
 
+# 即時報價快取（10 秒 TTL）
+realtime_cache = SimpleCache(maxsize=50, ttl=10)
+
 # 股票清單快取（每日更新）
 _stock_list_cache = {"data": None, "timestamp": None, "df": None}
 _stock_list_lock = Lock()
@@ -189,6 +192,86 @@ def get_stock_name(stock_id):
     return ""
 
 
+def is_trading_hours():
+    """判斷目前是否為台股交易時段（週一~週五 9:00~13:30）"""
+    now = datetime.now()
+    if now.weekday() >= 5:  # 週末
+        return False
+    return dtime(9, 0) <= now.time() <= dtime(13, 30)
+
+
+def get_stock_type(stock_id):
+    """判斷股票是上市(tse)還是上櫃(otc)"""
+    _, df = get_stock_list()
+    if df is not None and not df.empty:
+        match = df[df['stock_id'] == stock_id]
+        if not match.empty:
+            t = match.iloc[0].get('type', 'twse')
+            return 'otc' if t == 'tpex' else 'tse'
+    return 'tse'  # 預設上市
+
+
+def fetch_twse_realtime(stock_id):
+    """從 TWSE/TPEX 取得盤中即時報價"""
+    cached = realtime_cache.get(f"realtime:{stock_id}")
+    if cached is not None:
+        return cached
+
+    ex = get_stock_type(stock_id)
+    url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={ex}_{stock_id}.tw&json=1&delay=0"
+    try:
+        # TWSE SSL 憑證在 Python 3.14 下驗證可能失敗，使用 verify=False 繞過
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        resp = req.get(url, timeout=10, verify=False, headers={
+            'User-Agent': 'Mozilla/5.0',
+            'Referer': 'https://mis.twse.com.tw/stock/fibest.jsp'
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get('msgArray'):
+            return None
+
+        info = data['msgArray'][0]
+        # z = 最新成交價, o = 開盤, h = 最高, l = 最低, v = 累計成交量, y = 昨收
+        price = _safe_float(info.get('z'))
+        if price is None:
+            price = _safe_float(info.get('pz'))  # 試用 pz
+        if price is None:
+            return None
+
+        result = {
+            'price': price,
+            'open': _safe_float(info.get('o')) or price,
+            'high': _safe_float(info.get('h')) or price,
+            'low': _safe_float(info.get('l')) or price,
+            'volume': int(float(info.get('v', '0').replace(',', ''))) if info.get('v') else 0,
+            'yesterday_close': _safe_float(info.get('y')) or price,
+            'name': info.get('n', ''),
+            'time': info.get('t', ''),
+            'is_trading': is_trading_hours(),
+        }
+        result['change'] = round(result['price'] - result['yesterday_close'], 2)
+        yc = result['yesterday_close']
+        result['change_pct'] = round(result['change'] / yc * 100, 2) if yc else 0
+
+        realtime_cache.set(f"realtime:{stock_id}", result)
+        return result
+    except Exception as e:
+        logger.error("TWSE 即時 API 錯誤 [%s]: %s", stock_id, e)
+        return None
+
+
+def _safe_float(val):
+    """安全轉換浮點數，無效值返回 None"""
+    if val is None or val == '-' or val == '':
+        return None
+    try:
+        return float(str(val).replace(',', ''))
+    except (ValueError, TypeError):
+        return None
+
+
 # ============================================================
 # 靜態頁面路由
 # ============================================================
@@ -225,6 +308,20 @@ def stock_search():
     results = df[mask].head(20)
 
     return api_ok(results[['stock_id', 'stock_name', 'industry_category', 'type']].to_dict('records'))
+
+
+@app.route('/api/stock/realtime')
+def stock_realtime():
+    """取得盤中即時報價（TWSE/TPEX）"""
+    stock_id = request.args.get('id', '')
+    if not stock_id:
+        return api_error("缺少股票代號")
+
+    data = fetch_twse_realtime(stock_id)
+    if not data:
+        return api_error("無法取得即時報價（可能非交易時段）", 404)
+
+    return api_ok(data)
 
 
 @app.route('/api/stock/price')
@@ -273,6 +370,27 @@ def stock_indicators():
     df = pd.DataFrame(data)
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
+
+    # realtime=1 時，合併盤中即時數據
+    use_realtime = request.args.get('realtime', '0') == '1'
+    if use_realtime and is_trading_hours():
+        rt = fetch_twse_realtime(stock_id)
+        if rt and rt.get('price'):
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            # 移除可能已存在的今日資料（避免重複）
+            df = df[df['date'].dt.strftime('%Y-%m-%d') != today_str]
+            today_row = pd.DataFrame([{
+                'date': pd.Timestamp(today_str),
+                'open': rt['open'],
+                'max': rt['high'],
+                'min': rt['low'],
+                'close': rt['price'],
+                'Trading_Volume': rt['volume'],
+                'stock_id': stock_id,
+            }])
+            df = pd.concat([df, today_row], ignore_index=True)
+            logger.info("合併盤中數據: %s close=%s vol=%s",
+                       stock_id, rt['price'], rt['volume'])
 
     close = df['close'].astype(float)
     high = df['max'].astype(float)
