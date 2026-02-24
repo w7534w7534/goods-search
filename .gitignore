@@ -19,3 +19,11 @@ venv/
 # Gemini agent
 .gemini/
 .agents/
+.agent/
+_agents/
+_agent/
+
+# Environment
+.venv/
+.python-version
+EOF

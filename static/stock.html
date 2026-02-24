@@ -120,21 +120,39 @@
                 </div>
                 <div class="tab-nav">
                     <button class="tab-btn active" data-tab="institutional">三大法人</button>
-                    <button class="tab-btn" data-tab="holders">大戶持股</button>
+                    <button class="tab-btn" data-tab="concentration">集中度</button>
+                    <button class="tab-btn" data-tab="majorHolders">大戶籌碼</button>
                     <button class="tab-btn" data-tab="margin">融資融券</button>
-                    <button class="tab-btn" data-tab="shareholding">外資持股</button>
                 </div>
                 <div class="tab-content active" id="tab-institutional">
-                    <div class="chart-container small" id="institutionalChart"></div>
+                    <div style="margin-bottom: 24px;">
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:12px;">
+                            <h3 style="color:#e2e8f0; font-size:15px; margin:0;">法人買賣總覽</h3>
+                            <span id="overviewDateStamp" style="color:#64748b; font-size:12px;"></span>
+                        </div>
+                        <div class="table-wrapper" id="institutionalOverviewTable"></div>
+                    </div>
+                    <div>
+                        <h3 style="color:#e2e8f0; font-size:15px; margin-bottom:12px;">法人逐日買賣超</h3>
+                        <div class="table-wrapper" id="institutionalDailyTable"></div>
+                    </div>
                 </div>
-                <div class="tab-content" id="tab-holders">
-                    <div class="chart-container small" id="holdersChart"></div>
+                <div class="tab-content" id="tab-concentration">
+                    <div
+                        style="margin-bottom: 12px; padding: 12px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 4px;">
+                        <p style="color: #94a3b8; font-size: 13px; margin: 0; line-height: 1.5;">
+                            <b>💡 說明：</b>由於取得真實分點資料受限，此圖表採用<b>「(三大法人淨買賣超張數 ÷ 全市場總成交量) × 100%」</b>作為短線籌碼集中度的替代指標。<br>
+                            👉 <b>紅色正值</b>代表籌碼流向法人（集中）；<b>綠色負值</b>代表法人出貨給散戶（發散）。折線圖為近5日移動平均趨勢。
+                        </p>
+                    </div>
+                    <div class="chart-container small" id="concentrationChart"></div>
+                </div>
+                <div class="tab-content" id="tab-majorHolders">
+                    <div class="table-wrapper" id="majorHoldersTable"></div>
                 </div>
                 <div class="tab-content" id="tab-margin">
                     <div class="chart-container small" id="marginChart"></div>
-                </div>
-                <div class="tab-content" id="tab-shareholding">
-                    <div class="chart-container small" id="shareholdingChart"></div>
                 </div>
             </div>
 
@@ -143,34 +161,39 @@
                     <span class="icon">💰</span> 基本面分析
                 </div>
                 <div class="tab-nav">
-                    <button class="tab-btn active" data-tab="dividend">股利政策</button>
+                    <button class="tab-btn active" data-tab="eps">每股盈餘(EPS)</button>
                     <button class="tab-btn" data-tab="revenue">營收趨勢</button>
                     <button class="tab-btn" data-tab="financial">獲利能力</button>
-                    <button class="tab-btn" data-tab="profitability">ROE/ROA</button>
                 </div>
-                <div class="tab-content active" id="tab-dividend">
-                    <div class="table-wrapper" id="dividendTable"></div>
+                <div class="tab-content active" id="tab-eps">
+                    <div class="table-wrapper" id="epsTable"></div>
                 </div>
                 <div class="tab-content" id="tab-revenue">
-                    <div class="chart-container small" id="revenueChart"></div>
+                    <div class="table-wrapper" id="revenueTable"></div>
                 </div>
                 <div class="tab-content" id="tab-financial">
-                    <div class="chart-container small" id="financialChart"></div>
+                    <div class="table-wrapper" id="profitabilityMatrix"></div>
                 </div>
-                <div class="tab-content" id="tab-profitability">
-                    <div class="chart-container small" id="profitabilityChart"></div>
+            </div>
+
+            <!-- 股票新聞 (全寬) -->
+            <div class="glass-card" id="section-news" style="margin-top: 24px;">
+                <div class="card-title">
+                    <span class="icon">📰</span> 相關股票新聞
+                </div>
+                <div class="news-container" id="newsContainer">
+                    <div class="loading-news">新聞載入中...</div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <script src="/js/common.js"></script>
-    <script src="/js/signal.js"></script>
-    <script src="/js/realtime.js"></script>
-    <script src="/js/chart.js"></script>
-    <script src="/js/chip.js"></script>
-    <script src="/js/fundamental.js"></script>
-    <script src="/js/stock.js"></script>
+        <script src="/js/common.js"></script>
+        <script src="/js/signal.js"></script>
+        <script src="/js/realtime.js"></script>
+        <script src="/js/chart.js"></script>
+        <script src="/js/chip.js"></script>
+        <script src="/js/fundamental.js"></script>
+        <script src="/js/stock.js"></script>
 </body>
 
 </html>

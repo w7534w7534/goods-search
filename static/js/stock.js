@@ -125,7 +125,7 @@ function bindEvents() {
                         if (chart && chart.id) {
                             const instances = {
                                 institutionalChart: institutionalChartInstance,
-                                holdersChart: holdersChartInstance,
+                                concentrationChart: concentrationChartInstance,
                                 marginChart: marginChartInstance,
                                 shareholdingChart: shareholdingChartInstance,
                                 revenueChart: revenueChartInstance,
@@ -184,6 +184,12 @@ function getDateRange() {
     // 使用本地時間而非 UTC，避免 UTC+8 凌晨少一天
     const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return { start: fmt(start), end: fmt(end) };
+}
+
+function getYearAgoDate(years) {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - years);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 // ============================================================
@@ -288,7 +294,7 @@ async function loadAllData() {
         // 第二批：延遲載入籌碼面 + 基本面（降低 API 壓力）
         setTimeout(async () => {
             try {
-                const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp] = await Promise.all([
+                const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp, newsResp, longPriceResp, adjResp] = await Promise.all([
                     fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`, 1, true),
                     fetchAPI(`/api/stock/holders?id=${id}`),
                     fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`),
@@ -297,19 +303,32 @@ async function loadAllData() {
                     fetchAPI(`/api/stock/revenue?id=${id}`),
                     fetchAPI(`/api/stock/financial?id=${id}`),
                     fetchAPI(`/api/stock/balance-sheet?id=${id}`),
+                    fetchAPI(`/api/stock/news?id=${id}`),
+                    fetchAPI(`/api/stock/price?id=${id}&start=${getYearAgoDate(2)}&end=${end}`),
+                    fetchAPI(`/api/stock/adjusted-factors?id=${id}`) // 新增除權息還原系數
                 ]);
 
                 // instResp 是完整 JSON { status, data, consecutive }
                 if (instResp && instResp.data) {
-                    renderInstitutionalChart(instResp.data, instResp.consecutive);
+                    renderInstitutionalTables(instResp.data, instResp.consecutive, shareResp, priceResp?.data || priceResp);
+                    // 由於沒有大戶持股，以法人資料代為計算短線籌碼集中度
+                    renderConcentrationChart(instResp.data, priceResp?.data || priceResp);
                 }
-                if (holdResp) renderHoldersChart(holdResp);
                 if (marginResp) renderMarginChart(marginResp);
-                if (shareResp) renderShareholdingChart(shareResp);
-                if (divResp) renderDividendTable(divResp);
-                if (revResp) renderRevenueChart(revResp);
-                if (finResp) renderFinancialChart(finResp);
-                if (bsResp) renderProfitabilityChart(bsResp);
+
+                if (holdResp) {
+                    // 若 holdResp 是陣列，代表 fetchAPI 已經幫忙解構出 data
+                    // 若它是物件而且有 data 屬性，就取 data
+                    const hData = Array.isArray(holdResp) ? holdResp : (holdResp.data || []);
+                    if (hData.length > 0) renderHoldersTable(hData);
+                }
+
+                if (finResp) renderEpsTable(finResp, longPriceResp || priceResp?.data || priceResp, adjResp);
+                if (revResp) renderRevenueTable(revResp);
+                if (finResp && bsResp) renderProfitabilityMatrix(finResp, bsResp);
+
+                // 渲染新聞
+                renderStockNews(newsResp);
 
                 // 統一 resize 處理（籌碼面 + 基本面圖表）
                 setupChartResize();
@@ -415,3 +434,49 @@ function setupChartResize() {
         profitabilityChartInstance?.resize();
     });
 }
+
+// ============================================================
+// 股票相關新聞
+// ============================================================
+
+function renderStockNews(newsList) {
+    const container = document.getElementById('newsContainer');
+    if (!container) return;
+
+    if (!newsList || newsList.length === 0) {
+        container.innerHTML = '<div class="loading-news">暫無相關新聞</div>';
+        return;
+    }
+
+    let html = '';
+    newsList.forEach(item => {
+        // 格式化日期 (如果是 RSS 格式，嘗試解析)
+        let dateStr = item.pubDate || '';
+        if (dateStr) {
+            try {
+                const d = new Date(dateStr);
+                if (!isNaN(d.getTime())) {
+                    dateStr = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                }
+            } catch (e) {
+                console.warn('新聞日期解析失敗:', dateStr);
+            }
+        }
+
+        html += `
+            <a href="${item.link}" target="_blank" class="news-item">
+                <div class="news-content">
+                    <div class="news-title">${item.title}</div>
+                    <div class="news-meta">
+                        <span class="news-source">${item.source}</span>
+                        <span class="news-date">${dateStr}</span>
+                    </div>
+                </div>
+                <div class="news-arrow">→</div>
+            </a>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+

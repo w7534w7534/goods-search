@@ -12,56 +12,311 @@ let holdersChartInstance = null;
 let marginChartInstance = null;
 let shareholdingChartInstance = null;
 
-function renderInstitutionalChart(data, consecutive) {
-    const chartDom = document.getElementById('institutionalChart');
-    if (!chartDom) return;
-    if (institutionalChartInstance) institutionalChartInstance.dispose();
-    institutionalChartInstance = echarts.init(chartDom);
+function renderInstitutionalTables(instData, consecutive, shareData, priceData) {
+    const overviewContainer = document.getElementById('institutionalOverviewTable');
+    const dailyContainer = document.getElementById('institutionalDailyTable');
+    if (!overviewContainer || !dailyContainer) return;
 
-    consecutive = consecutive || {};
-
-    if (!data || data.length === 0) {
-        showEmpty(chartDom, '暫無三大法人資料');
+    if (!instData || instData.length === 0) {
+        overviewContainer.innerHTML = `<div class="empty-state"><p>暫無資料</p></div>`;
+        dailyContainer.innerHTML = '';
         return;
     }
 
-    // 整理數據：按日期分組，合併各法人
-    const dateMap = {};
-    data.forEach(d => {
-        if (!dateMap[d.date]) {
-            dateMap[d.date] = { 外資: 0, 投信: 0, 自營商: 0 };
+    // 整理外資持股比例, map by date
+    const shareMap = {};
+    if (shareData) {
+        const sData = Array.isArray(shareData) ? shareData : (shareData.data || []);
+        sData.forEach(d => {
+            if (d.date) {
+                shareMap[d.date] = parseFloat(d.ForeignInvestmentRemainingShares || d.ForeignInvestmentSharesPercent || d.percent || 0);
+            }
+        });
+    }
+
+    // 整理股價與成交量, map by date
+    const priceMap = {};
+    if (priceData && Array.isArray(priceData)) {
+        const sortedPrice = [...priceData].sort((a, b) => a.date.localeCompare(b.date));
+        for (let i = 0; i < sortedPrice.length; i++) {
+            const current = sortedPrice[i];
+            const prev = i > 0 ? sortedPrice[i - 1] : current;
+            const close = parseFloat(current.close || 0);
+            const prevClose = parseFloat(prev.close || close);
+            const changePct = prevClose > 0 ? ((close - prevClose) / prevClose) * 100 : 0;
+            const volume = parseFloat(current.Trading_Volume || current.volume || current.TradeVolume || 0);
+
+            priceMap[current.date] = { close, changePct, volume };
         }
-        const buyOrSell = (d.buy || 0) - (d.sell || 0);
-        const n = d.name || '';
-        if (n.includes('外資') || n.includes('Foreign')) {
-            dateMap[d.date]['外資'] += buyOrSell;
-        } else if (n.includes('投信') || n.includes('Investment_Trust')) {
-            dateMap[d.date]['投信'] += buyOrSell;
-        } else if (n.includes('自營商') || n.includes('Dealer')) {
-            dateMap[d.date]['自營商'] += buyOrSell;
+    }
+
+    // 整理三大法人買賣資料, map by date
+    const dateMap = {};
+    instData.forEach(d => {
+        if (!dateMap[d.date]) {
+            dateMap[d.date] = { '外資': { buy: 0, sell: 0 }, '投信': { buy: 0, sell: 0 }, '自營商': { buy: 0, sell: 0 } };
+        }
+        const b = d.buy || 0;
+        const s = d.sell || 0;
+        let n = d.name || '';
+        if (n.includes('外資') || n.includes('Foreign')) n = '外資';
+        else if (n.includes('投信') || n.includes('Investment_Trust')) n = '投信';
+        else if (n.includes('自營商') || n.includes('Dealer')) n = '自營商';
+
+        if (dateMap[d.date][n]) {
+            dateMap[d.date][n].buy += b;
+            dateMap[d.date][n].sell += s;
         }
     });
 
-    const dates = Object.keys(dateMap).sort();
-    const foreign = dates.map(d => dateMap[d]['外資']);
-    const trust = dates.map(d => dateMap[d]['投信']);
-    const dealer = dates.map(d => dateMap[d]['自營商']);
+    const dates = Object.keys(dateMap).sort((a, b) => b.localeCompare(a)); // 新到舊
+    if (dates.length === 0) return;
 
-    // 連買天數文字
-    const consecText = Object.entries(consecutive).map(([name, val]) => {
-        if (val > 0) return `${name} 連買 ${val} 天`;
-        if (val < 0) return `${name} 連賣 ${Math.abs(val)} 天`;
-        return `${name} 中立`;
-    }).join('　');
+    const dateStampDom = document.getElementById('overviewDateStamp');
+    if (dateStampDom) {
+        dateStampDom.textContent = `資料時間：${dates[0].replace(/-/g, '/')}`;
+    }
+
+    // 計算連買連賣累計張數
+    const consecSum = {};
+    if (consecutive) {
+        ['外資', '投信', '自營商'].forEach(t => {
+            const days = consecutive[t];
+            if (!days || days === 0) {
+                consecSum[t] = 0;
+                return;
+            }
+            const absDays = Math.abs(days);
+            let sum = 0;
+            for (let i = 0; i < Math.min(absDays, dates.length); i++) {
+                const dNet = (dateMap[dates[i]][t].buy - dateMap[dates[i]][t].sell);
+                sum += Math.round(dNet / 1000);
+            }
+            consecSum[t] = sum;
+        });
+    }
+
+    // 1. 渲染法人買賣總覽 (取最新一日)
+    const latestDate = dates[0];
+    const latestData = dateMap[latestDate];
+    const types = ['外資', '投信', '自營商'];
+
+    let totalBuy = 0;
+    let totalSell = 0;
+
+    const getColor = val => val >= 0 ? 'color:var(--accent-red)' : 'color:var(--accent-green)';
+
+    const getConsecutiveText = (name) => {
+        if (!consecutive) return '—';
+        const val = consecutive[name];
+        const sum = consecSum[name] || 0;
+        const sumStr = formatNumber(Math.abs(sum));
+        if (val > 0) return `<span style="color:var(--accent-red)">連${val}買 (${sumStr})</span>`;
+        if (val < 0) return `<span style="color:var(--accent-green)">連${Math.abs(val)}賣 (${sumStr})</span>`;
+        return '—';
+    };
+
+    let overviewHtml = `
+        <table class="data-table" style="font-feature-settings: 'tnum';">
+            <thead>
+                <tr>
+                    <th style="text-align:left">單位(張)</th>
+                    <th style="text-align:right">買進</th>
+                    <th style="text-align:right">賣出</th>
+                    <th style="text-align:right">買賣超</th>
+                    <th style="text-align:right">連買連賣</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    types.forEach(t => {
+        const d = latestData[t];
+        const buy = Math.round(d.buy / 1000);
+        const sell = Math.round(d.sell / 1000);
+        const net = buy - sell;
+        totalBuy += buy;
+        totalSell += sell;
+
+        overviewHtml += `
+            <tr>
+                <td style="color:#94a3b8">${t}</td>
+                <td style="text-align:right">${formatNumber(buy)}</td>
+                <td style="text-align:right">${formatNumber(sell)}</td>
+                <td style="text-align:right; ${getColor(net)}">${formatNumber(net)}</td>
+                <td style="text-align:right">${getConsecutiveText(t)}</td>
+            </tr>
+        `;
+    });
+
+    const totalNet = totalBuy - totalSell;
+
+    // 計算三大法人的總連買連賣
+    let totalNetList = [];
+    dates.forEach(date => {
+        let dailyNet = 0;
+        types.forEach(t => dailyNet += Math.round((dateMap[date][t].buy - dateMap[date][t].sell) / 1000));
+        totalNetList.push(dailyNet);
+    });
+
+    let totalConsecDays = 0;
+    let totalConsecSum = 0;
+    const direction = totalNetList[0] > 0 ? 1 : (totalNetList[0] < 0 ? -1 : 0);
+    if (direction !== 0) {
+        for (let num of totalNetList) {
+            if ((direction > 0 && num > 0) || (direction < 0 && num < 0)) {
+                totalConsecDays += direction;
+                totalConsecSum += num;
+            } else {
+                break;
+            }
+        }
+    }
+
+    let totalConsecText = '—';
+    if (totalConsecDays > 0) totalConsecText = `<span style="color:var(--accent-red)">連${totalConsecDays}買 (${formatNumber(Math.abs(totalConsecSum))})</span>`;
+    else if (totalConsecDays < 0) totalConsecText = `<span style="color:var(--accent-green)">連${Math.abs(totalConsecDays)}賣 (${formatNumber(Math.abs(totalConsecSum))})</span>`;
+
+    overviewHtml += `
+            <tr style="border-top:1px solid rgba(255,255,255,0.1)">
+                <td style="color:#94a3b8; font-weight:600">三大法人</td>
+                <td style="text-align:right; font-weight:600">${formatNumber(totalBuy)}</td>
+                <td style="text-align:right; font-weight:600">${formatNumber(totalSell)}</td>
+                <td style="text-align:right; font-weight:600; ${getColor(totalNet)}">${formatNumber(totalNet)}</td>
+                <td style="text-align:right">${totalConsecText}</td>
+            </tr>
+        </tbody></table>
+    `;
+    overviewContainer.innerHTML = overviewHtml;
+
+    // 2. 渲染法人逐日買賣超 (取近30日)
+    let dailyHtml = `
+        <table class="data-table" style="font-feature-settings: 'tnum';">
+            <thead>
+                <tr>
+                    <th style="text-align:left">日期</th>
+                    <th style="text-align:right">外資(張)</th>
+                    <th style="text-align:right">投信(張)</th>
+                    <th style="text-align:right">自營商(張)</th>
+                    <th style="text-align:right">合計(張)</th>
+                    <th style="text-align:right">外資籌碼</th>
+                    <th style="text-align:right">漲跌幅(%)</th>
+                    <th style="text-align:right">成交量(張)</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    dates.slice(0, 30).forEach(date => {
+        const data = dateMap[date];
+        const fNet = Math.round((data['外資'].buy - data['外資'].sell) / 1000);
+        const tNet = Math.round((data['投信'].buy - data['投信'].sell) / 1000);
+        const dNet = Math.round((data['自營商'].buy - data['自營商'].sell) / 1000);
+        const dailyTotal = fNet + tNet + dNet;
+
+        const priceInfo = priceMap[date] || { changePct: 0, volume: 0 };
+        const sharePct = shareMap[date] ? shareMap[date].toFixed(2) + '%' : '—';
+        const volStr = priceInfo.volume > 0 ? formatNumber(Math.round(priceInfo.volume / 1000)) : '—';
+
+        let changeColor = '#94a3b8';
+        let changeStr = '0.00%';
+        if (priceInfo.changePct > 0) {
+            changeColor = 'var(--accent-red)';
+            changeStr = '▲ ' + priceInfo.changePct.toFixed(2) + '%';
+        } else if (priceInfo.changePct < 0) {
+            changeColor = 'var(--accent-green)';
+            changeStr = '▼ ' + Math.abs(priceInfo.changePct).toFixed(2) + '%';
+        }
+
+        dailyHtml += `
+            <tr>
+                <td style="color:#94a3b8">${date.replace(/-/g, '/')}</td>
+                <td style="text-align:right">${formatNumber(fNet)}</td>
+                <td style="text-align:right">${formatNumber(tNet)}</td>
+                <td style="text-align:right">${formatNumber(dNet)}</td>
+                <td style="text-align:right; ${getColor(dailyTotal)}">${formatNumber(dailyTotal)}</td>
+                <td style="text-align:right">${sharePct}</td>
+                <td style="text-align:right; font-weight:600; color:${changeColor}">${changeStr}</td>
+                <td style="text-align:right; color:#64748b">${volStr}</td>
+            </tr>
+        `;
+    });
+
+    dailyHtml += '</tbody></table>';
+    dailyContainer.innerHTML = dailyHtml;
+}
+
+// ============================================================
+// 籌碼集中度 / 替代持股顯示
+// ============================================================
+
+let concentrationChartInstance = null;
+
+function renderConcentrationChart(instData, priceData) {
+    const chartDom = document.getElementById('concentrationChart');
+    if (!chartDom) return;
+    if (concentrationChartInstance) concentrationChartInstance.dispose();
+    concentrationChartInstance = echarts.init(chartDom);
+
+    if (!instData || instData.length === 0 || !priceData || priceData.length === 0) {
+        showEmpty(chartDom, '資料不足以計算籌碼集中度');
+        return;
+    }
+
+    // 建立日期對照表，計算每天的籌碼集中度 (以三大法人買超佔總成交量比例來模擬短線集中度)
+    // 真正的籌碼集中度 = (買進前15大分點 - 賣出前15大分點) / 總成交量，這邊用 (三大法人淨買超 / 總成交量) 做平替
+    const volumeMap = {};
+    priceData.forEach(p => {
+        if (p.date) {
+            volumeMap[p.date] = p.Trading_Volume || p.volume || 1;
+        }
+    });
+
+    const dateMap = {};
+    instData.forEach(d => {
+        if (!dateMap[d.date]) {
+            dateMap[d.date] = 0;
+        }
+        const net = (d.buy || 0) - (d.sell || 0);
+        dateMap[d.date] += net;
+    });
+
+    const dates = Object.keys(dateMap).sort();
+    const concentrationRates = [];
+    const avgRates = [];
+
+    // 計算 5 日移動平均集中度
+    const windowSize = 5;
+    const history = [];
+
+    dates.forEach(d => {
+        const netBuy = dateMap[d];
+        const vol = volumeMap[d];
+        let rate = 0;
+        if (vol && vol > 0) {
+            // 三大法人買賣超通常是金額或張數，我們假設它與成交量單位相近或轉化計算比例
+            // 若單位差異過大導致比例異常，限制在 -100% 到 +100% 之間
+            rate = (netBuy / vol) * 100;
+            rate = Math.max(-100, Math.min(100, rate));
+        }
+        concentrationRates.push(rate.toFixed(2));
+
+        history.push(rate);
+        if (history.length > windowSize) {
+            history.shift();
+        }
+        const avg = history.reduce((a, b) => a + b, 0) / history.length;
+        avgRates.push(avg.toFixed(2));
+    });
 
     const option = {
         backgroundColor: 'transparent',
-        title: consecText ? {
-            text: `📊 ${consecText}`,
+        title: {
+            text: '模擬短線籌碼集中度 (法人淨買超 / 成交量)',
             left: 'center',
             bottom: 0,
-            textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 400 },
-        } : undefined,
+            textStyle: { color: '#94a3b8', fontSize: 10, fontWeight: 400 },
+        },
         tooltip: {
             trigger: 'axis',
             backgroundColor: 'rgba(17, 24, 39, 0.95)',
@@ -70,25 +325,23 @@ function renderInstitutionalChart(data, consecutive) {
             formatter: function (params) {
                 let html = `<b>${params[0].axisValue}</b><br/>`;
                 params.forEach(p => {
-                    const val = p.value;
-                    const color = val >= 0 ? '#ef4444' : '#10b981';
-                    html += `<span style="color:${p.color}">●</span> ${p.seriesName}: <b style="color:${color}">${formatNumber(val)}</b><br/>`;
+                    html += `<span style="color:${p.color}">●</span> ${p.seriesName}: <b>${p.value}%</b><br/>`;
                 });
                 return html;
             }
         },
         legend: {
-            data: ['外資', '投信', '自營商'],
+            data: ['單日集中度', '5日集中度'],
             textStyle: { color: '#94a3b8', fontSize: 11 },
             top: 0,
         },
-        grid: { left: 55, right: 15, top: 30, bottom: consecText ? 35 : 25 },
+        grid: { left: 45, right: 15, top: 30, bottom: 25 },
         xAxis: {
             type: 'category',
             data: dates,
             axisLine: { lineStyle: { color: '#334155' } },
             axisLabel: {
-                color: '#64748b', fontSize: 10, rotate: 0,
+                color: '#64748b', fontSize: 10,
                 formatter: v => v.substring(5)
             },
             axisTick: { show: false },
@@ -98,11 +351,7 @@ function renderInstitutionalChart(data, consecutive) {
             axisLine: { show: false },
             axisLabel: {
                 color: '#64748b', fontSize: 10,
-                formatter: v => {
-                    if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(0) + 'M';
-                    if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(0) + 'K';
-                    return v;
-                }
+                formatter: '{value}%'
             },
             splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
         },
@@ -113,123 +362,28 @@ function renderInstitutionalChart(data, consecutive) {
         }],
         series: [
             {
-                name: '外資',
+                name: '單日集中度',
                 type: 'bar',
-                stack: 'total',
-                data: foreign,
-                itemStyle: { color: '#3b82f6' },
+                data: concentrationRates,
+                itemStyle: {
+                    color: function (params) {
+                        return params.value >= 0 ? '#ef4444' : '#10b981';
+                    }
+                },
                 barWidth: '50%',
             },
             {
-                name: '投信',
-                type: 'bar',
-                stack: 'total',
-                data: trust,
-                itemStyle: { color: '#8b5cf6' },
-            },
-            {
-                name: '自營商',
-                type: 'bar',
-                stack: 'total',
-                data: dealer,
-                itemStyle: { color: '#06b6d4' },
+                name: '5日集中度',
+                type: 'line',
+                data: avgRates,
+                lineStyle: { color: '#f59e0b', width: 2 },
+                symbol: 'none',
+                smooth: true,
             }
         ]
     };
 
-    institutionalChartInstance.setOption(option);
-}
-
-// ============================================================
-// 大戶持股分佈圖
-// ============================================================
-
-function renderHoldersChart(data) {
-    const chartDom = document.getElementById('holdersChart');
-    if (!chartDom) return;
-    if (holdersChartInstance) holdersChartInstance.dispose();
-    holdersChartInstance = echarts.init(chartDom);
-
-    if (!data || data.length === 0) {
-        showEmpty(chartDom, '暫無大戶持股資料');
-        return;
-    }
-
-    // 取最新一期的資料
-    const dates = [...new Set(data.map(d => d.date))].sort();
-    const latest = dates[dates.length - 1];
-    const latestData = data.filter(d => d.date === latest);
-
-    // 分組：散戶 (<100張), 中實戶 (100~1000張), 大戶 (>1000張)
-    let retail = 0, mid = 0, big = 0, total = 0;
-    latestData.forEach(d => {
-        const shares = parseFloat(d.HoldingSharesLevel || d.percent || 0);
-        const pct = parseFloat(d.percent || 0);
-        const level = d.HoldingSharesLevel || '';
-
-        // 根據持股分級名稱分類
-        if (level.includes('1,000') || level.includes('5,000') || level.includes('10,000') || level.includes('以上')) {
-            big += pct;
-        } else if (level.includes('200') || level.includes('400') || level.includes('600') || level.includes('800')) {
-            mid += pct;
-        } else {
-            retail += pct;
-        }
-    });
-
-    // 如果找不到百分比，使用簡單圓餅
-    if (big === 0 && mid === 0 && retail === 0) {
-        const half = latestData.length / 2;
-        latestData.forEach((d, i) => {
-            const pct = parseFloat(d.percent || d.unit || 1);
-            if (i < latestData.length * 0.3) retail += pct;
-            else if (i < latestData.length * 0.7) mid += pct;
-            else big += pct;
-        });
-    }
-
-    const option = {
-        backgroundColor: 'transparent',
-        tooltip: {
-            trigger: 'item',
-            backgroundColor: 'rgba(17, 24, 39, 0.95)',
-            borderColor: 'rgba(255,255,255,0.08)',
-            textStyle: { color: '#f1f5f9' },
-            formatter: '{b}: {d}%'
-        },
-        legend: {
-            orient: 'vertical',
-            right: 10,
-            top: 'center',
-            textStyle: { color: '#94a3b8', fontSize: 12 },
-        },
-        series: [{
-            name: '持股分佈',
-            type: 'pie',
-            radius: ['40%', '70%'],
-            center: ['35%', '50%'],
-            avoidLabelOverlap: true,
-            itemStyle: {
-                borderRadius: 6,
-                borderColor: 'rgba(17, 24, 39, 0.8)',
-                borderWidth: 2,
-            },
-            label: {
-                show: true,
-                position: 'inside',
-                formatter: '{d}%',
-                fontSize: 11,
-                color: '#fff',
-            },
-            data: [
-                { value: retail, name: '散戶', itemStyle: { color: '#3b82f6' } },
-                { value: mid, name: '中實戶', itemStyle: { color: '#8b5cf6' } },
-                { value: big, name: '大戶', itemStyle: { color: '#ef4444' } },
-            ]
-        }]
-    };
-
-    holdersChartInstance.setOption(option);
+    concentrationChartInstance.setOption(option);
 }
 
 // ============================================================
@@ -318,8 +472,13 @@ function renderMarginChart(data) {
                 name: '融資餘額',
                 type: 'line',
                 data: marginBuy,
-                lineStyle: { color: '#ef4444', width: 1.5 },
-                areaStyle: { color: 'rgba(239, 68, 68, 0.08)' },
+                lineStyle: { color: '#ef4444', width: 2 },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(239, 68, 68, 0.3)' },
+                        { offset: 1, color: 'rgba(239, 68, 68, 0.05)' }
+                    ])
+                },
                 symbol: 'none',
                 smooth: true,
             },
@@ -327,8 +486,13 @@ function renderMarginChart(data) {
                 name: '融券餘額',
                 type: 'line',
                 data: shortSell,
-                lineStyle: { color: '#10b981', width: 1.5 },
-                areaStyle: { color: 'rgba(16, 185, 129, 0.08)' },
+                lineStyle: { color: '#10b981', width: 2 },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(16, 185, 129, 0.3)' },
+                        { offset: 1, color: 'rgba(16, 185, 129, 0.05)' }
+                    ])
+                },
                 symbol: 'none',
                 smooth: true,
             },
@@ -337,8 +501,9 @@ function renderMarginChart(data) {
                 type: 'line',
                 yAxisIndex: 1,
                 data: shortMarginRatio,
-                lineStyle: { color: '#f97316', width: 1.5, type: 'dashed' },
-                symbol: 'none',
+                lineStyle: { color: '#f97316', width: 2, type: 'dashed' },
+                symbol: 'circle',
+                symbolSize: 4,
                 smooth: true,
             }
         ]
@@ -347,88 +512,55 @@ function renderMarginChart(data) {
     marginChartInstance.setOption(option);
 }
 
+
+
 // ============================================================
-// 外資持股趨勢圖
+// 大戶籌碼表格
 // ============================================================
 
-function renderShareholdingChart(data) {
-    const chartDom = document.getElementById('shareholdingChart');
-    if (!chartDom) return;
-    if (shareholdingChartInstance) shareholdingChartInstance.dispose();
-    shareholdingChartInstance = echarts.init(chartDom);
+function renderHoldersTable(data) {
+    const container = document.getElementById('majorHoldersTable');
+    if (!container) return;
 
     if (!data || data.length === 0) {
-        showEmpty(chartDom, '暫無外資持股資料');
+        container.innerHTML = `<div class="empty-state"><div class="emoji">📭</div><p>暫無大戶籌碼資料</p></div>`;
         return;
     }
 
-    const sorted = [...data].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    const dates = sorted.map(d => d.date);
-    const shares = sorted.map(d => parseFloat(d.ForeignInvestmentShares || d.foreign_investment_shares || 0));
-    const pct = sorted.map(d => parseFloat(d.ForeignInvestmentRemainingShares || d.ForeignInvestmentSharesPercent || d.percent || 0));
+    let html = `
+        <table class="data-table" style="font-feature-settings: 'tnum';">
+            <thead>
+                <tr>
+                    <th style="border-right:1px solid rgba(255,255,255,0.05)">年度/日期</th>
+                    <th style="text-align:right">外資籌碼</th>
+                    <th style="text-align:right">大戶籌碼<br><span style="font-size:10px;color:#64748b;font-weight:400">(限制:無資料)</span></th>
+                    <th style="text-align:right">董監持股<br><span style="font-size:10px;color:#64748b;font-weight:400">(限制:無資料)</span></th>
+                    <th style="text-align:right; border-left:1px solid rgba(255,255,255,0.05)">股價</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
 
-    // 判斷使用哪個數據（有比例用比例，沒有用持股張數）
-    const hasPercent = pct.some(v => v > 0);
+    data.forEach(r => {
+        const dateStr = r.date ? r.date.replace(/-/g, '/') : '—';
+        const foreignStr = r.foreign_ratio ? r.foreign_ratio.toFixed(2) + '%' : '—';
+        const majorStr = r.major_ratio ? r.major_ratio.toFixed(2) + '%' : '—';
+        const dirStr = r.director_ratio ? r.director_ratio.toFixed(2) + '%' : '—';
+        const priceStr = r.price ? r.price.toFixed(1) : '—';
 
-    const option = {
-        backgroundColor: 'transparent',
-        tooltip: {
-            trigger: 'axis',
-            backgroundColor: 'rgba(17, 24, 39, 0.95)',
-            borderColor: 'rgba(255,255,255,0.08)',
-            textStyle: { color: '#f1f5f9', fontSize: 12 },
-        },
-        legend: {
-            data: hasPercent ? ['外資持股比例'] : ['外資持股張數'],
-            textStyle: { color: '#94a3b8', fontSize: 11 },
-            top: 0,
-        },
-        grid: { left: 55, right: 15, top: 30, bottom: 25 },
-        xAxis: {
-            type: 'category',
-            data: dates,
-            axisLine: { lineStyle: { color: '#334155' } },
-            axisLabel: {
-                color: '#64748b', fontSize: 10,
-                formatter: v => v.substring(5)
-            },
-            axisTick: { show: false },
-        },
-        yAxis: {
-            type: 'value',
-            name: hasPercent ? '%' : '張',
-            axisLine: { show: false },
-            axisLabel: {
-                color: '#64748b', fontSize: 10,
-                formatter: v => hasPercent ? v.toFixed(1) + '%' : formatNumber(v)
-            },
-            splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
-        },
-        dataZoom: [{
-            type: 'inside',
-            start: 60,
-            end: 100,
-        }],
-        series: [{
-            name: hasPercent ? '外資持股比例' : '外資持股張數',
-            type: 'line',
-            data: hasPercent ? pct : shares,
-            lineStyle: { color: '#3b82f6', width: 2 },
-            areaStyle: {
-                color: {
-                    type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-                    colorStops: [
-                        { offset: 0, color: 'rgba(59, 130, 246, 0.25)' },
-                        { offset: 1, color: 'rgba(59, 130, 246, 0.02)' },
-                    ],
-                },
-            },
-            symbol: 'none',
-            smooth: true,
-        }]
-    };
+        html += `
+            <tr>
+                <td style="color:#94a3b8; border-right:1px solid rgba(255,255,255,0.02)">${dateStr}</td>
+                <td style="text-align:right; font-weight:500">${foreignStr}</td>
+                <td style="text-align:right">${majorStr}</td>
+                <td style="text-align:right">${dirStr}</td>
+                <td style="text-align:right; font-weight:600; color:#64748b; border-left:1px solid rgba(255,255,255,0.02)">${priceStr}</td>
+            </tr>
+        `;
+    });
 
-    shareholdingChartInstance.setOption(option);
+    html += '</tbody></table>';
+    container.innerHTML = html;
 }
 
 // ============================================================
