@@ -1,51 +1,9 @@
 /**
  * 儀表板主控制邏輯
  * 優化：名稱從 URL 讀取、分批載入、retry、圖表聯動、
- *       自選股、匯出、資訊卡片、主題切換
+ *       自選股、匯出、資訊卡片
+ * 共用功能（Toast / 主題 / 自選股 / formatNumber）由 common.js 提供
  */
-
-// ============================================================
-// 通用工具（與 app.js 共用簽名）
-// ============================================================
-
-function showToast(msg, type = 'info') {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = msg;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3200);
-}
-
-// 主題切換
-function initTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = saved === 'dark' ? '☀️' : '🌙';
-}
-function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
-    // ECharts 需要重新渲染（因為顏色不同）
-    // 目前使用透明背景所以不需特殊處理
-}
-document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
-initTheme();
-
-// 自選股
-function getWatchlist() {
-    try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); }
-    catch { return []; }
-}
-function saveWatchlist(list) {
-    localStorage.setItem('watchlist', JSON.stringify(list));
-}
 
 // ============================================================
 // 狀態管理
@@ -96,7 +54,7 @@ function initWatchlistBtn() {
     const btn = document.getElementById('watchlistBtn');
     if (!btn) return;
 
-    const isIn = getWatchlist().some(s => s.id === state.stockId);
+    const isIn = isInWatchlist(state.stockId);
     btn.textContent = isIn ? '★' : '☆';
     btn.classList.toggle('active', isIn);
 
@@ -169,8 +127,10 @@ function bindEvents() {
                                 institutionalChart: institutionalChartInstance,
                                 holdersChart: holdersChartInstance,
                                 marginChart: marginChartInstance,
+                                shareholdingChart: shareholdingChartInstance,
                                 revenueChart: revenueChartInstance,
                                 financialChart: financialChartInstance,
+                                profitabilityChart: profitabilityChartInstance,
                             };
                             instances[chart.id]?.resize();
                         }
@@ -228,15 +188,26 @@ function getDateRange() {
 }
 
 // ============================================================
-// API fetch + retry
+// API fetch + retry（支援新格式 { status, data, message }）
 // ============================================================
 
-async function fetchAPI(url, retries = 1) {
+async function fetchAPI(url, retries = 1, fullResponse = false) {
     for (let i = 0; i <= retries; i++) {
         try {
             const resp = await fetch(url);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            return await resp.json();
+            const json = await resp.json();
+
+            // 支援新格式：{ status: "ok|error", data: ..., message: "..." }
+            if (json.status === 'error') {
+                console.warn(`API 錯誤 (${url}): ${json.message}`);
+                showToast(json.message || 'API 回傳錯誤', 'error');
+                return null;
+            }
+            // fullResponse: 回傳完整 JSON（含 data 以外的額外欄位）
+            if (fullResponse) return json;
+            // 新格式回傳 data 欄位；舊格式相容（直接回傳內容）
+            return json.data !== undefined ? json.data : json;
         } catch (err) {
             if (i < retries) {
                 await new Promise(r => setTimeout(r, 1000));
@@ -267,13 +238,13 @@ async function loadAllData() {
             fetchAPI(`/api/stock/per?id=${id}`),
         ]);
 
-        // 從 price API 取名稱（已內含）
+        // priceResp 現在透過 fetchAPI 自動提取 data 欄位
         if (priceResp && priceResp.data && priceResp.data.length > 0) {
+            // 新格式：{ name: "...", data: [...] }
             const priceData = priceResp.data;
             const latest = priceData[priceData.length - 1];
             const prev = priceData.length > 1 ? priceData[priceData.length - 2] : latest;
 
-            // 從 API 回傳的名稱更新
             if (priceResp.name && !state.stockName) {
                 state.stockName = priceResp.name;
                 document.getElementById('stockName').textContent = priceResp.name;
@@ -286,14 +257,12 @@ async function loadAllData() {
             if (indResp) {
                 initKlineChart(priceData, indResp);
                 initIndicatorChart(indResp);
-
-                // 聯動 K 線圖和指標圖
                 if (klineChartInstance && indicatorChartInstance) {
                     echarts.connect([klineChartInstance, indicatorChartInstance]);
                 }
             }
-        } else if (priceResp && Array.isArray(priceResp) && priceResp.length > 0) {
-            // 相容舊格式
+        } else if (Array.isArray(priceResp) && priceResp.length > 0) {
+            // 舊格式相容：直接是陣列
             const latest = priceResp[priceResp.length - 1];
             const prev = priceResp.length > 1 ? priceResp[priceResp.length - 2] : latest;
             updatePriceDisplay(latest, prev);
@@ -308,21 +277,35 @@ async function loadAllData() {
 
         // 第二批：延遲載入籌碼面 + 基本面（降低 API 壓力）
         setTimeout(async () => {
-            const [instResp, holdResp, marginResp, divResp, revResp, finResp] = await Promise.all([
-                fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`),
-                fetchAPI(`/api/stock/holders?id=${id}`),
-                fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`),
-                fetchAPI(`/api/stock/dividend?id=${id}`),
-                fetchAPI(`/api/stock/revenue?id=${id}`),
-                fetchAPI(`/api/stock/financial?id=${id}`),
-            ]);
+            try {
+                const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp] = await Promise.all([
+                    fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`, 1, true),
+                    fetchAPI(`/api/stock/holders?id=${id}`),
+                    fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`),
+                    fetchAPI(`/api/stock/shareholding?id=${id}&start=${start}&end=${end}`),
+                    fetchAPI(`/api/stock/dividend?id=${id}`),
+                    fetchAPI(`/api/stock/revenue?id=${id}`),
+                    fetchAPI(`/api/stock/financial?id=${id}`),
+                    fetchAPI(`/api/stock/balance-sheet?id=${id}`),
+                ]);
 
-            renderInstitutionalChart(instResp);
-            renderHoldersChart(holdResp);
-            renderMarginChart(marginResp);
-            renderDividendTable(divResp);
-            renderRevenueChart(revResp);
-            renderFinancialChart(finResp);
+                // instResp 是完整 JSON { status, data, consecutive }
+                if (instResp && instResp.data) {
+                    renderInstitutionalChart(instResp.data, instResp.consecutive);
+                }
+                if (holdResp) renderHoldersChart(holdResp);
+                if (marginResp) renderMarginChart(marginResp);
+                if (shareResp) renderShareholdingChart(shareResp);
+                if (divResp) renderDividendTable(divResp);
+                if (revResp) renderRevenueChart(revResp);
+                if (finResp) renderFinancialChart(finResp);
+                if (bsResp) renderProfitabilityChart(bsResp);
+
+                // 統一 resize 處理（籌碼面 + 基本面圖表）
+                setupChartResize();
+            } catch (err) {
+                console.error('籌碼面/基本面資料載入錯誤:', err);
+            }
         }, 500);
 
     } catch (err) {
@@ -404,9 +387,21 @@ function showLoading(elementId) {
     }
 }
 
-function formatNumber(num) {
-    if (num == null) return '—';
-    if (Math.abs(num) >= 1e8) return (num / 1e8).toFixed(2) + ' 億';
-    if (Math.abs(num) >= 1e4) return (num / 1e4).toFixed(1) + ' 萬';
-    return num.toLocaleString();
+// ============================================================
+// 統一 resize 處理（籌碼面 + 基本面圖表）
+// ============================================================
+
+let _chipResizeBound = false;
+function setupChartResize() {
+    if (_chipResizeBound) return;
+    _chipResizeBound = true;
+    window.addEventListener('resize', () => {
+        institutionalChartInstance?.resize();
+        holdersChartInstance?.resize();
+        marginChartInstance?.resize();
+        shareholdingChartInstance?.resize();
+        revenueChartInstance?.resize();
+        financialChartInstance?.resize();
+        profitabilityChartInstance?.resize();
+    });
 }

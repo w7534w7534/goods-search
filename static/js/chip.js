@@ -1,21 +1,24 @@
 /**
  * 籌碼面圖表模組
- * 三大法人買賣超、大戶持股、融資融券
+ * 三大法人買賣超（含連買天數）、大戶持股、融資融券（含券資比）、外資持股趨勢
  */
 
 // ============================================================
-// 三大法人買賣超圖表
+// 三大法人買賣超圖表（含連買天數標示）
 // ============================================================
 
 let institutionalChartInstance = null;
 let holdersChartInstance = null;
 let marginChartInstance = null;
+let shareholdingChartInstance = null;
 
-function renderInstitutionalChart(data) {
+function renderInstitutionalChart(data, consecutive) {
     const chartDom = document.getElementById('institutionalChart');
     if (!chartDom) return;
     if (institutionalChartInstance) institutionalChartInstance.dispose();
     institutionalChartInstance = echarts.init(chartDom);
+
+    consecutive = consecutive || {};
 
     if (!data || data.length === 0) {
         showEmpty(chartDom, '暫無三大法人資料');
@@ -29,11 +32,12 @@ function renderInstitutionalChart(data) {
             dateMap[d.date] = { 外資: 0, 投信: 0, 自營商: 0 };
         }
         const buyOrSell = (d.buy || 0) - (d.sell || 0);
-        if (d.name && d.name.includes('外資')) {
+        const n = d.name || '';
+        if (n.includes('外資') || n.includes('Foreign')) {
             dateMap[d.date]['外資'] += buyOrSell;
-        } else if (d.name && d.name.includes('投信')) {
+        } else if (n.includes('投信') || n.includes('Investment_Trust')) {
             dateMap[d.date]['投信'] += buyOrSell;
-        } else if (d.name && (d.name.includes('自營商') || d.name.includes('Dealer'))) {
+        } else if (n.includes('自營商') || n.includes('Dealer')) {
             dateMap[d.date]['自營商'] += buyOrSell;
         }
     });
@@ -43,8 +47,21 @@ function renderInstitutionalChart(data) {
     const trust = dates.map(d => dateMap[d]['投信']);
     const dealer = dates.map(d => dateMap[d]['自營商']);
 
+    // 連買天數文字
+    const consecText = Object.entries(consecutive).map(([name, val]) => {
+        if (val > 0) return `${name} 連買 ${val} 天`;
+        if (val < 0) return `${name} 連賣 ${Math.abs(val)} 天`;
+        return `${name} 中立`;
+    }).join('　');
+
     const option = {
         backgroundColor: 'transparent',
+        title: consecText ? {
+            text: `📊 ${consecText}`,
+            left: 'center',
+            bottom: 0,
+            textStyle: { color: '#94a3b8', fontSize: 11, fontWeight: 400 },
+        } : undefined,
         tooltip: {
             trigger: 'axis',
             backgroundColor: 'rgba(17, 24, 39, 0.95)',
@@ -65,7 +82,7 @@ function renderInstitutionalChart(data) {
             textStyle: { color: '#94a3b8', fontSize: 11 },
             top: 0,
         },
-        grid: { left: 55, right: 15, top: 30, bottom: 25 },
+        grid: { left: 55, right: 15, top: 30, bottom: consecText ? 35 : 25 },
         xAxis: {
             type: 'category',
             data: dates,
@@ -121,7 +138,6 @@ function renderInstitutionalChart(data) {
     };
 
     institutionalChartInstance.setOption(option);
-    window.addEventListener('resize', () => institutionalChartInstance?.resize());
 }
 
 // ============================================================
@@ -214,11 +230,10 @@ function renderHoldersChart(data) {
     };
 
     holdersChartInstance.setOption(option);
-    window.addEventListener('resize', () => holdersChartInstance?.resize());
 }
 
 // ============================================================
-// 融資融券圖表
+// 融資融券圖表（含券資比折線）
 // ============================================================
 
 function renderMarginChart(data) {
@@ -235,6 +250,7 @@ function renderMarginChart(data) {
     const dates = data.map(d => d.date);
     const marginBuy = data.map(d => d.MarginPurchaseTodayBalance || d.MarginPurchaseBalance || 0);
     const shortSell = data.map(d => d.ShortSaleTodayBalance || d.ShortSaleBalance || 0);
+    const shortMarginRatio = data.map(d => d.short_margin_ratio || 0);
 
     const option = {
         backgroundColor: 'transparent',
@@ -243,13 +259,23 @@ function renderMarginChart(data) {
             backgroundColor: 'rgba(17, 24, 39, 0.95)',
             borderColor: 'rgba(255,255,255,0.08)',
             textStyle: { color: '#f1f5f9', fontSize: 12 },
+            formatter: function (params) {
+                let html = `<b>${params[0].axisValue}</b><br/>`;
+                params.forEach(p => {
+                    const val = p.seriesName === '券資比' ?
+                        (p.value != null ? p.value.toFixed(2) + '%' : '—') :
+                        formatNumber(p.value);
+                    html += `<span style="color:${p.color}">●</span> ${p.seriesName}: <b>${val}</b><br/>`;
+                });
+                return html;
+            }
         },
         legend: {
-            data: ['融資餘額', '融券餘額'],
+            data: ['融資餘額', '融券餘額', '券資比'],
             textStyle: { color: '#94a3b8', fontSize: 11 },
             top: 0,
         },
-        grid: { left: 55, right: 15, top: 30, bottom: 25 },
+        grid: { left: 55, right: 50, top: 30, bottom: 25 },
         xAxis: {
             type: 'category',
             data: dates,
@@ -273,9 +299,12 @@ function renderMarginChart(data) {
             },
             {
                 type: 'value',
-                name: '融券',
+                name: '券資比%',
                 axisLine: { show: false },
-                axisLabel: { color: '#64748b', fontSize: 10 },
+                axisLabel: {
+                    color: '#64748b', fontSize: 10,
+                    formatter: v => v + '%'
+                },
                 splitLine: { show: false },
             }
         ],
@@ -297,10 +326,18 @@ function renderMarginChart(data) {
             {
                 name: '融券餘額',
                 type: 'line',
-                yAxisIndex: 1,
                 data: shortSell,
                 lineStyle: { color: '#10b981', width: 1.5 },
                 areaStyle: { color: 'rgba(16, 185, 129, 0.08)' },
+                symbol: 'none',
+                smooth: true,
+            },
+            {
+                name: '券資比',
+                type: 'line',
+                yAxisIndex: 1,
+                data: shortMarginRatio,
+                lineStyle: { color: '#f97316', width: 1.5, type: 'dashed' },
                 symbol: 'none',
                 smooth: true,
             }
@@ -308,7 +345,90 @@ function renderMarginChart(data) {
     };
 
     marginChartInstance.setOption(option);
-    window.addEventListener('resize', () => marginChartInstance?.resize());
+}
+
+// ============================================================
+// 外資持股趨勢圖
+// ============================================================
+
+function renderShareholdingChart(data) {
+    const chartDom = document.getElementById('shareholdingChart');
+    if (!chartDom) return;
+    if (shareholdingChartInstance) shareholdingChartInstance.dispose();
+    shareholdingChartInstance = echarts.init(chartDom);
+
+    if (!data || data.length === 0) {
+        showEmpty(chartDom, '暫無外資持股資料');
+        return;
+    }
+
+    const sorted = [...data].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const dates = sorted.map(d => d.date);
+    const shares = sorted.map(d => parseFloat(d.ForeignInvestmentShares || d.foreign_investment_shares || 0));
+    const pct = sorted.map(d => parseFloat(d.ForeignInvestmentRemainingShares || d.ForeignInvestmentSharesPercent || d.percent || 0));
+
+    // 判斷使用哪個數據（有比例用比例，沒有用持股張數）
+    const hasPercent = pct.some(v => v > 0);
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(17, 24, 39, 0.95)',
+            borderColor: 'rgba(255,255,255,0.08)',
+            textStyle: { color: '#f1f5f9', fontSize: 12 },
+        },
+        legend: {
+            data: hasPercent ? ['外資持股比例'] : ['外資持股張數'],
+            textStyle: { color: '#94a3b8', fontSize: 11 },
+            top: 0,
+        },
+        grid: { left: 55, right: 15, top: 30, bottom: 25 },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLine: { lineStyle: { color: '#334155' } },
+            axisLabel: {
+                color: '#64748b', fontSize: 10,
+                formatter: v => v.substring(5)
+            },
+            axisTick: { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            name: hasPercent ? '%' : '張',
+            axisLine: { show: false },
+            axisLabel: {
+                color: '#64748b', fontSize: 10,
+                formatter: v => hasPercent ? v.toFixed(1) + '%' : formatNumber(v)
+            },
+            splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+        },
+        dataZoom: [{
+            type: 'inside',
+            start: 60,
+            end: 100,
+        }],
+        series: [{
+            name: hasPercent ? '外資持股比例' : '外資持股張數',
+            type: 'line',
+            data: hasPercent ? pct : shares,
+            lineStyle: { color: '#3b82f6', width: 2 },
+            areaStyle: {
+                color: {
+                    type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: [
+                        { offset: 0, color: 'rgba(59, 130, 246, 0.25)' },
+                        { offset: 1, color: 'rgba(59, 130, 246, 0.02)' },
+                    ],
+                },
+            },
+            symbol: 'none',
+            smooth: true,
+        }]
+    };
+
+    shareholdingChartInstance.setOption(option);
 }
 
 // ============================================================

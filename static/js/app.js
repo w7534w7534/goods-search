@@ -1,6 +1,7 @@
 /**
  * 搜尋首頁邏輯
- * 搜尋、自動完成、自選股、主題切換
+ * 搜尋、自動完成、自選股渲染
+ * 共用功能（Toast / 主題 / 自選股）由 common.js 提供
  */
 
 const searchInput = document.getElementById('searchInput');
@@ -12,58 +13,8 @@ let activeIndex = -1;
 let currentResults = [];
 
 // ============================================================
-// 通用工具：Toast 通知
+// 自選股 (首頁渲染)
 // ============================================================
-
-function showToast(msg, type = 'info') {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.textContent = msg;
-    container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3200);
-}
-
-// ============================================================
-// 主題切換
-// ============================================================
-
-function initTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
-    updateThemeIcon(saved);
-}
-
-function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    updateThemeIcon(next);
-}
-
-function updateThemeIcon(theme) {
-    const btn = document.getElementById('themeToggle');
-    if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
-}
-
-document.getElementById('themeToggle')?.addEventListener('click', toggleTheme);
-initTheme();
-
-// ============================================================
-// 自選股 (Watchlist)
-// ============================================================
-
-function getWatchlist() {
-    try {
-        return JSON.parse(localStorage.getItem('watchlist') || '[]');
-    } catch { return []; }
-}
-
-function saveWatchlist(list) {
-    localStorage.setItem('watchlist', JSON.stringify(list));
-}
 
 function toggleWatchlist(stockId, stockName) {
     const list = getWatchlist();
@@ -78,10 +29,6 @@ function toggleWatchlist(stockId, stockName) {
     saveWatchlist(list);
     renderWatchlist();
     return list.some(s => s.id === stockId);
-}
-
-function isInWatchlist(stockId) {
-    return getWatchlist().some(s => s.id === stockId);
 }
 
 function renderWatchlist() {
@@ -117,10 +64,16 @@ async function searchStocks(query) {
 
     try {
         const resp = await fetch(`/api/stock/search?q=${encodeURIComponent(query)}`);
-        const data = await resp.json();
-        currentResults = data;
+        const json = await resp.json();
+        // 支援新格式 { status, data } 和舊格式（直接陣列）
+        const data = json.data ?? json;
+        if (json.status === 'error') {
+            showToast(json.message || '搜尋失敗', 'error');
+            return;
+        }
+        currentResults = Array.isArray(data) ? data : [];
         activeIndex = -1;
-        renderDropdown(data);
+        renderDropdown(currentResults);
     } catch (err) {
         console.error('搜尋錯誤:', err);
         showToast('搜尋連線失敗，請檢查伺服器', 'error');

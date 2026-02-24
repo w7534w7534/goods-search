@@ -1,13 +1,14 @@
 /**
  * 基本面圖表模組
- * 股利政策表格、營收趨勢圖、獲利能力圖
+ * 股利政策表格（含配息率）、營收趨勢圖、獲利能力圖、ROE/ROA 圖
  */
 
 let revenueChartInstance = null;
 let financialChartInstance = null;
+let profitabilityChartInstance = null;
 
 // ============================================================
-// 股利政策表格
+// 股利政策表格（含配息率）
 // ============================================================
 
 function renderDividendTable(data) {
@@ -26,6 +27,7 @@ function renderDividendTable(data) {
         stockDividend: parseFloat(d.StockEarningsDistribution || d.stock_dividend || 0),
         totalDividend: (parseFloat(d.CashEarningsDistribution || d.cash_dividend || 0)
             + parseFloat(d.StockEarningsDistribution || d.stock_dividend || 0)),
+        eps: parseFloat(d.EarningsPerShare || d.eps || 0),
     })).sort((a, b) => b.year.localeCompare(a.year));
 
     let html = `
@@ -36,18 +38,22 @@ function renderDividendTable(data) {
                     <th>現金股利</th>
                     <th>股票股利</th>
                     <th>合計</th>
+                    <th>配息率</th>
                 </tr>
             </thead>
             <tbody>
     `;
 
     rows.forEach(r => {
+        const payoutRatio = r.eps > 0 ? ((r.totalDividend / r.eps) * 100).toFixed(1) : '—';
+        const payoutClass = r.eps > 0 && (r.totalDividend / r.eps) > 0.8 ? 'style="color:var(--accent-green)"' : '';
         html += `
             <tr>
                 <td>${r.year.substring(0, 10)}</td>
                 <td>${r.cashDividend.toFixed(2)}</td>
                 <td>${r.stockDividend.toFixed(2)}</td>
                 <td style="font-weight:600; color:var(--accent-blue)">${r.totalDividend.toFixed(2)}</td>
+                <td ${payoutClass}>${payoutRatio}${payoutRatio !== '—' ? '%' : ''}</td>
             </tr>
         `;
     });
@@ -161,7 +167,6 @@ function renderRevenueChart(data) {
     };
 
     revenueChartInstance.setOption(option);
-    window.addEventListener('resize', () => revenueChartInstance?.resize());
 }
 
 // ============================================================
@@ -284,5 +289,128 @@ function renderFinancialChart(data) {
     };
 
     financialChartInstance.setOption(option);
-    window.addEventListener('resize', () => financialChartInstance?.resize());
+}
+
+// ============================================================
+// ROE / ROA / 負債比率圖
+// ============================================================
+
+function renderProfitabilityChart(data) {
+    const chartDom = document.getElementById('profitabilityChart');
+    if (!chartDom) return;
+    if (profitabilityChartInstance) profitabilityChartInstance.dispose();
+    profitabilityChartInstance = echarts.init(chartDom);
+
+    if (!data || data.length === 0) {
+        chartDom.innerHTML = `<div class="empty-state"><div class="emoji">📭</div><p>暫無資產負債表資料</p></div>`;
+        return;
+    }
+
+    // FinMind TaiwanStockBalanceSheet 格式：每筆有 type + value
+    const roeData = {};
+    const roaData = {};
+    const debtRatioData = {};
+
+    data.forEach(d => {
+        const date = (d.date || '').substring(0, 7);
+        const type = d.type || '';
+        const value = parseFloat(d.value || 0);
+
+        if (type.includes('ROE') || type.includes('股東權益報酬率') || type === 'ReturnOnEquity') {
+            roeData[date] = value;
+        } else if (type.includes('ROA') || type.includes('資產報酬率') || type === 'ReturnOnAssets') {
+            roaData[date] = value;
+        } else if (type.includes('負債比') || type.includes('DebtRatio') || type.includes('負債佔資產比率')) {
+            debtRatioData[date] = value;
+        }
+    });
+
+    const allDates = [...new Set([
+        ...Object.keys(roeData),
+        ...Object.keys(roaData),
+        ...Object.keys(debtRatioData)
+    ])].sort();
+
+    if (allDates.length === 0) {
+        chartDom.innerHTML = `<div class="empty-state"><div class="emoji">📭</div><p>暫無 ROE/ROA 資料</p></div>`;
+        return;
+    }
+
+    // 更新負債比卡片
+    const latestDebt = Object.keys(debtRatioData).sort().pop();
+    if (latestDebt) {
+        const debtEl = document.getElementById('debtRatioValue');
+        if (debtEl) debtEl.textContent = debtRatioData[latestDebt].toFixed(1) + '%';
+    }
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(17, 24, 39, 0.95)',
+            borderColor: 'rgba(255,255,255,0.08)',
+            textStyle: { color: '#f1f5f9', fontSize: 12 },
+            formatter: function (params) {
+                let html = `<b>${params[0].axisValue}</b><br/>`;
+                params.forEach(p => {
+                    if (p.value != null) {
+                        html += `<span style="color:${p.color}">●</span> ${p.seriesName}: <b>${p.value.toFixed(2)}%</b><br/>`;
+                    }
+                });
+                return html;
+            }
+        },
+        legend: {
+            data: ['ROE', 'ROA', '負債比'],
+            textStyle: { color: '#94a3b8', fontSize: 11 },
+            top: 0,
+        },
+        grid: { left: 50, right: 15, top: 30, bottom: 25 },
+        xAxis: {
+            type: 'category',
+            data: allDates,
+            axisLine: { lineStyle: { color: '#334155' } },
+            axisLabel: { color: '#64748b', fontSize: 10, rotate: 30 },
+            axisTick: { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            name: '%',
+            axisLine: { show: false },
+            axisLabel: { color: '#64748b', fontSize: 10, formatter: v => v + '%' },
+            splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+        },
+        series: [
+            {
+                name: 'ROE',
+                type: 'line',
+                data: allDates.map(d => roeData[d] || null),
+                lineStyle: { color: '#3b82f6', width: 2 },
+                symbol: 'circle',
+                symbolSize: 5,
+                itemStyle: { color: '#3b82f6' },
+                areaStyle: { color: 'rgba(59, 130, 246, 0.08)' },
+            },
+            {
+                name: 'ROA',
+                type: 'line',
+                data: allDates.map(d => roaData[d] || null),
+                lineStyle: { color: '#10b981', width: 2 },
+                symbol: 'circle',
+                symbolSize: 5,
+                itemStyle: { color: '#10b981' },
+            },
+            {
+                name: '負債比',
+                type: 'line',
+                data: allDates.map(d => debtRatioData[d] || null),
+                lineStyle: { color: '#ef4444', width: 1.5, type: 'dashed' },
+                symbol: 'diamond',
+                symbolSize: 5,
+                itemStyle: { color: '#ef4444' },
+            }
+        ]
+    };
+
+    profitabilityChartInstance.setOption(option);
 }

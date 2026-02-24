@@ -87,6 +87,7 @@
                 <button class="indicator-btn active" data-indicator="ma">MA 均線</button>
                 <button class="indicator-btn" data-indicator="bb">布林通道</button>
                 <button class="indicator-btn" data-indicator="vwap">VWAP</button>
+                <button class="indicator-btn pink" data-indicator="signal">📍 訊號</button>
             </div>
             <div class="chart-container" id="klineChart"></div>
         </div>
@@ -103,6 +104,8 @@
                 <button class="indicator-btn orange" data-indicator="obv">OBV</button>
                 <button class="indicator-btn pink" data-indicator="dmi">DMI</button>
                 <button class="indicator-btn" data-indicator="wr">W%R</button>
+                <button class="indicator-btn cyan" data-indicator="bias">BIAS</button>
+                <button class="indicator-btn" data-indicator="atr">ATR</button>
             </div>
             <div class="chart-container medium" id="indicatorChart"></div>
         </div>
@@ -117,6 +120,7 @@
                     <button class="tab-btn active" data-tab="institutional">三大法人</button>
                     <button class="tab-btn" data-tab="holders">大戶持股</button>
                     <button class="tab-btn" data-tab="margin">融資融券</button>
+                    <button class="tab-btn" data-tab="shareholding">外資持股</button>
                 </div>
                 <div class="tab-content active" id="tab-institutional">
                     <div class="chart-container small" id="institutionalChart"></div>
@@ -126,6 +130,9 @@
                 </div>
                 <div class="tab-content" id="tab-margin">
                     <div class="chart-container small" id="marginChart"></div>
+                </div>
+                <div class="tab-content" id="tab-shareholding">
+                    <div class="chart-container small" id="shareholdingChart"></div>
                 </div>
             </div>
 
@@ -137,6 +144,7 @@
                     <button class="tab-btn active" data-tab="dividend">股利政策</button>
                     <button class="tab-btn" data-tab="revenue">營收趨勢</button>
                     <button class="tab-btn" data-tab="financial">獲利能力</button>
+                    <button class="tab-btn" data-tab="profitability">ROE/ROA</button>
                 </div>
                 <div class="tab-content active" id="tab-dividend">
                     <div class="table-wrapper" id="dividendTable"></div>
@@ -147,10 +155,15 @@
                 <div class="tab-content" id="tab-financial">
                     <div class="chart-container small" id="financialChart"></div>
                 </div>
+                <div class="tab-content" id="tab-profitability">
+                    <div class="chart-container small" id="profitabilityChart"></div>
+                </div>
             </div>
         </div>
     </div>
 
+    <script src="/js/common.js"></script>
+    <script src="/js/signal.js"></script>
     <script src="/js/chart.js"></script>
     <script src="/js/chip.js"></script>
     <script src="/js/fundamental.js"></script>

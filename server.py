@@ -3,11 +3,20 @@
 提供搜尋、K線、技術指標、籌碼面、基本面等 API 端點
 
 優化：
+- 統一 API 回傳格式 { status, data, message }
+- python-dotenv 管理環境變數
+- logging 取代 print
 - 股票清單記憶體快取（每日更新一次）
 - API 響應 TTL 快取（5 分鐘）
-- Price + Indicators 合併端點
 - CSV 匯出端點
 """
+
+import logging
+import os
+import io
+import json
+from datetime import datetime, timedelta
+from threading import Lock
 
 from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
@@ -15,12 +24,28 @@ import requests as req
 import pandas as pd
 import numpy as np
 import ta
-import os
-import io
-import csv
-import json
-from datetime import datetime, timedelta
-from threading import Lock
+
+# 載入 .env 環境變數
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv 未安裝時略過
+
+# ============================================================
+# 日誌設定
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# Flask 應用
+# ============================================================
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -28,6 +53,23 @@ CORS(app)
 # FinMind API 設定
 FINMIND_API_URL = "https://api.finmindtrade.com/api/v4/data"
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+
+
+# ============================================================
+# 統一回傳格式
+# ============================================================
+
+def api_ok(data, **extra):
+    """回傳成功格式"""
+    result = {"status": "ok", "data": data}
+    result.update(extra)
+    return jsonify(result)
+
+
+def api_error(message, status_code=400):
+    """回傳錯誤格式"""
+    return jsonify({"status": "error", "data": None, "message": message}), status_code
+
 
 # ============================================================
 # 快取系統
@@ -81,6 +123,7 @@ def get_stock_list():
             _stock_list_cache["data"] = data
             _stock_list_cache["df"] = df
             _stock_list_cache["timestamp"] = now
+            logger.info("股票清單已更新，共 %d 檔", len(df))
             return data, df
 
         return [], pd.DataFrame()
@@ -112,7 +155,7 @@ def finmind_request_raw(dataset, data_id=None, start_date=None, end_date=None):
             return data["data"]
         return []
     except Exception as e:
-        print(f"FinMind API 錯誤: {e}")
+        logger.error("FinMind API 錯誤 [%s]: %s", dataset, e)
         return []
 
 
@@ -169,11 +212,11 @@ def stock_search():
     """搜尋股票 — 支援名稱或代號模糊查詢（使用快取）"""
     query = request.args.get('q', '').strip()
     if not query:
-        return jsonify([])
+        return api_ok([])
 
     _, df = get_stock_list()
     if df is None or df.empty:
-        return jsonify([])
+        return api_error("無法取得股票清單", 503)
 
     mask = (
         df['stock_id'].str.contains(query, case=False, na=False) |
@@ -181,7 +224,7 @@ def stock_search():
     )
     results = df[mask].head(20)
 
-    return jsonify(results[['stock_id', 'stock_name', 'industry_category', 'type']].to_dict('records'))
+    return api_ok(results[['stock_id', 'stock_name', 'industry_category', 'type']].to_dict('records'))
 
 
 @app.route('/api/stock/price')
@@ -192,7 +235,7 @@ def stock_price():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
 
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(12)
@@ -203,7 +246,7 @@ def stock_price():
     # 附加股票名稱
     name = get_stock_name(stock_id)
 
-    return jsonify({"name": name, "data": data})
+    return api_ok({"name": name, "data": data})
 
 
 @app.route('/api/stock/indicators')
@@ -214,7 +257,7 @@ def stock_indicators():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
 
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(12)
@@ -225,7 +268,7 @@ def stock_indicators():
                            start_date=warmup_start, end_date=end_date)
 
     if not data:
-        return jsonify({"error": "無法取得股價資料"}), 404
+        return api_error("無法取得股價資料", 404)
 
     df = pd.DataFrame(data)
     df['date'] = pd.to_datetime(df['date'])
@@ -283,6 +326,16 @@ def stock_indicators():
     wr = ta.momentum.WilliamsRIndicator(high, low, close, lbp=14)
     result['williams_r'] = wr.williams_r().round(2).tolist()
 
+    # BIAS 乖離率 (5, 10, 20)
+    for period in [5, 10, 20]:
+        ma = ta.trend.SMAIndicator(close, window=period).sma_indicator()
+        bias = ((close - ma) / ma * 100).round(2)
+        result[f'bias{period}'] = bias.tolist()
+
+    # ATR 真實波幅 (14)
+    atr_ind = ta.volatility.AverageTrueRange(high, low, close, window=14)
+    result['atr'] = atr_ind.average_true_range().round(2).tolist()
+
     # 過濾掉預熱期
     dates = result['date']
     start_idx = 0
@@ -303,24 +356,52 @@ def stock_indicators():
                 for v in values
             ]
 
-    return jsonify(filtered_result)
+    return api_ok(filtered_result)
 
 
 @app.route('/api/stock/institutional')
 def stock_institutional():
-    """取得三大法人買賣超資料"""
+    """取得三大法人買賣超資料（含連續買賣超天數）"""
     stock_id = request.args.get('id', '')
     start_date = request.args.get('start', '')
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(6)
 
     data = finmind_request("TaiwanStockInstitutionalInvestorsBuySell",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+
+    # 計算各法人連續買賣超天數
+    consecutive = {}
+    if data:
+        df = pd.DataFrame(data)
+        df['net'] = df['buy'].fillna(0) - df['sell'].fillna(0)
+        # FinMind name 可能是中文或英文格式
+        name_patterns = {
+            '外資': ['外資', 'Foreign'],
+            '投信': ['投信', 'Investment_Trust'],
+            '自營商': ['自營商', 'Dealer'],
+        }
+        for display_name, patterns in name_patterns.items():
+            pattern = '|'.join(patterns)
+            mask = df['name'].str.contains(pattern, na=False)
+            sub = df[mask].groupby('date')['net'].sum().sort_index()
+            if len(sub) > 0:
+                # 從最後一天往回數連續同方向天數
+                last_val = sub.iloc[-1]
+                direction = 1 if last_val > 0 else (-1 if last_val < 0 else 0)
+                count = 0
+                for val in reversed(sub.values):
+                    if (direction > 0 and val > 0) or (direction < 0 and val < 0):
+                        count += 1
+                    else:
+                        break
+                consecutive[display_name] = count * direction  # 正=連買，負=連賣
+
+    return api_ok(data, consecutive=consecutive)
 
 
 @app.route('/api/stock/shareholding')
@@ -331,30 +412,40 @@ def stock_shareholding():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(6)
 
     data = finmind_request("TaiwanStockShareholding",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+    return api_ok(data)
 
 
 @app.route('/api/stock/margin')
 def stock_margin():
-    """取得融資融券資料"""
+    """取得融資融券資料（含券資比）"""
     stock_id = request.args.get('id', '')
     start_date = request.args.get('start', '')
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(6)
 
     data = finmind_request("TaiwanStockMarginPurchaseShortSale",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+
+    # 計算券資比
+    if data:
+        for row in data:
+            margin_bal = row.get('MarginPurchaseTodayBalance') or row.get('MarginPurchaseBalance') or 0
+            short_bal = row.get('ShortSaleTodayBalance') or row.get('ShortSaleBalance') or 0
+            margin_bal = float(margin_bal) if margin_bal else 0
+            short_bal = float(short_bal) if short_bal else 0
+            row['short_margin_ratio'] = round(short_bal / margin_bal * 100, 2) if margin_bal > 0 else 0
+
+    return api_ok(data)
 
 
 @app.route('/api/stock/holders')
@@ -364,7 +455,7 @@ def stock_holders():
     date = request.args.get('date', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
 
     if not date:
         start_date, end_date = get_default_dates(3)
@@ -374,7 +465,7 @@ def stock_holders():
 
     data = finmind_request("TaiwanStockHoldingSharesPer",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+    return api_ok(data)
 
 
 @app.route('/api/stock/dividend')
@@ -383,11 +474,11 @@ def stock_dividend():
     stock_id = request.args.get('id', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
 
     data = finmind_request("TaiwanStockDividend",
                            data_id=stock_id, start_date="2015-01-01")
-    return jsonify(data)
+    return api_ok(data)
 
 
 @app.route('/api/stock/revenue')
@@ -398,13 +489,13 @@ def stock_revenue():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(36)
 
     data = finmind_request("TaiwanStockMonthRevenue",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+    return api_ok(data)
 
 
 @app.route('/api/stock/financial')
@@ -415,13 +506,30 @@ def stock_financial():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(36)
 
     data = finmind_request("TaiwanStockFinancialStatements",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+    return api_ok(data)
+
+
+@app.route('/api/stock/balance-sheet')
+def stock_balance_sheet():
+    """取得資產負債表（ROE, ROA, 負債比）"""
+    stock_id = request.args.get('id', '')
+    start_date = request.args.get('start', '')
+    end_date = request.args.get('end', '')
+
+    if not stock_id:
+        return api_error("缺少股票代號")
+    if not start_date or not end_date:
+        start_date, end_date = get_default_dates(36)
+
+    data = finmind_request("TaiwanStockBalanceSheet",
+                           data_id=stock_id, start_date=start_date, end_date=end_date)
+    return api_ok(data)
 
 
 @app.route('/api/stock/per')
@@ -432,13 +540,13 @@ def stock_per():
     end_date = request.args.get('end', '')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(1)
 
     data = finmind_request("TaiwanStockPER",
                            data_id=stock_id, start_date=start_date, end_date=end_date)
-    return jsonify(data)
+    return api_ok(data)
 
 
 @app.route('/api/stock/export')
@@ -450,7 +558,7 @@ def stock_export():
     dataset = request.args.get('type', 'price')
 
     if not stock_id:
-        return jsonify({"error": "缺少股票代號"}), 400
+        return api_error("缺少股票代號")
     if not start_date or not end_date:
         start_date, end_date = get_default_dates(6)
 
@@ -464,7 +572,7 @@ def stock_export():
                            start_date=start_date, end_date=end_date)
 
     if not data:
-        return jsonify({"error": "無資料可匯出"}), 404
+        return api_error("無資料可匯出", 404)
 
     df = pd.DataFrame(data)
     output = io.StringIO()
@@ -485,6 +593,6 @@ def stock_export():
 # ============================================================
 
 if __name__ == '__main__':
-    print("🚀 台灣股票資訊查詢工具 — 伺服器啟動中...")
-    print("📡 請在瀏覽器開啟 http://localhost:5000")
+    logger.info("🚀 台灣股票資訊查詢工具 — 伺服器啟動中...")
+    logger.info("📡 請在瀏覽器開啟 http://localhost:5000")
     app.run(debug=True, host='0.0.0.0', port=5000)

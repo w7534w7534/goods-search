@@ -541,6 +541,12 @@ body::before {
     color: var(--accent-pink);
 }
 
+.indicator-btn.active.cyan {
+    background: rgba(6, 182, 212, 0.15);
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+}
+
 /* 圖表容器 */
 .chart-container {
     width: 100%;

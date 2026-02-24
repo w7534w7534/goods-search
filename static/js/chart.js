@@ -10,6 +10,17 @@ let indicatorChartInstance = null;
 let indicatorData = null;
 let priceData = null;
 
+// resize 事件只綁定一次
+let _resizeBound = false;
+function _bindResizeOnce() {
+    if (_resizeBound) return;
+    _resizeBound = true;
+    window.addEventListener('resize', () => {
+        klineChartInstance?.resize();
+        indicatorChartInstance?.resize();
+    });
+}
+
 // ============================================================
 // K 線圖 + 主指標（MA、BB、VWAP）
 // ============================================================
@@ -25,10 +36,7 @@ function initKlineChart(data, indicators) {
     klineChartInstance = echarts.init(chartDom);
 
     renderKlineChart();
-
-    window.addEventListener('resize', () => {
-        if (klineChartInstance) klineChartInstance.resize();
-    });
+    _bindResizeOnce();
 }
 
 function renderKlineChart() {
@@ -126,6 +134,22 @@ function renderKlineChart() {
             lineStyle: { width: 1.5, color: '#ec4899', type: 'dotted' },
             symbol: 'none',
         });
+    }
+
+    // 買賣訊號標記
+    if (activeIndicators.includes('signal') && typeof detectSignals === 'function') {
+        const signals = detectSignals(indicatorData, ohlc);
+        const markData = signalsToMarkPoints(signals, ohlc);
+        if (markData.length > 0) {
+            // 在 K 線 series 上加 markPoint
+            series[0].markPoint = {
+                data: markData,
+                animation: true,
+            };
+        }
+    } else {
+        // 確保關閉時清除 markPoint
+        series[0].markPoint = { data: [] };
     }
 
     const option = {
@@ -248,10 +272,7 @@ function initIndicatorChart(indicators) {
     indicatorChartInstance = echarts.init(chartDom);
 
     renderIndicatorChart();
-
-    window.addEventListener('resize', () => {
-        if (indicatorChartInstance) indicatorChartInstance.resize();
-    });
+    _bindResizeOnce();
 }
 
 function renderIndicatorChart() {
@@ -383,6 +404,22 @@ function renderIndicatorChart() {
                     symbol: 'none',
                 });
                 break;
+            case 'bias':
+                addLine('BIAS5', indicatorData.bias5, '#eab308');
+                addLine('BIAS10', indicatorData.bias10, '#f97316');
+                addLine('BIAS20', indicatorData.bias20, '#3b82f6');
+                // 零軸
+                series.push({
+                    name: '零軸', type: 'line',
+                    data: new Array(dates.length).fill(0),
+                    xAxisIndex: idx, yAxisIndex: idx,
+                    lineStyle: { width: 1, color: '#64748b55', type: 'solid' },
+                    symbol: 'none',
+                });
+                break;
+            case 'atr':
+                addLine('ATR', indicatorData.atr, '#ec4899');
+                break;
         }
     });
 
@@ -434,9 +471,4 @@ function getActiveSubIndicators() {
         .map(btn => btn.dataset.indicator);
 }
 
-function formatNumber(num) {
-    if (num == null) return '—';
-    if (num >= 1e8) return (num / 1e8).toFixed(2) + ' 億';
-    if (num >= 1e4) return (num / 1e4).toFixed(1) + ' 萬';
-    return num.toLocaleString();
-}
+
