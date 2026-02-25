@@ -147,7 +147,7 @@ def stock_adjusted_factors():
 
     # 快取 1 天，因為除權息資料不會頻繁變動
     cache_key = f"adj_{stock_id}"
-    cached = get_cache(cache_key)
+    cached = api_cache.get(cache_key)
     if cached: return api_ok(cached)
 
     # 抓取最近 3 年的除權息資料
@@ -155,7 +155,7 @@ def stock_adjusted_factors():
     data = finmind_request("TaiwanStockDividend", data_id=stock_id, start_date=start_date)
     
     if data:
-        set_cache(cache_key, data, expire=86400)
+        api_cache.set(cache_key, data)
         return api_ok(data)
     return api_ok([])
 
@@ -261,6 +261,20 @@ def fetch_twse_realtime(stock_id):
         if price is None:
             price = _safe_float(info.get('pz'))  # 試用 pz
         if price is None:
+            # 若無最新成交價，嘗試以最佳買價第一檔作為基準
+            b_prices = info.get('b', '').split('_')
+            if b_prices and b_prices[0] and b_prices[0] != '-':
+                price = _safe_float(b_prices[0])
+        if price is None:
+            # 嘗試最佳賣價
+            a_prices = info.get('a', '').split('_')
+            if a_prices and a_prices[0] and a_prices[0] != '-':
+                price = _safe_float(a_prices[0])
+        if price is None:
+            # 沒辦法的話使用昨日收盤價
+            price = _safe_float(info.get('y'))
+            
+        if price is None:
             return None
 
         result = {
@@ -362,6 +376,23 @@ def stock_price():
 
     data = finmind_request("TaiwanStockPrice", data_id=stock_id,
                            start_date=start_date, end_date=end_date)
+                           
+    use_realtime = request.args.get('realtime', '0') == '1'
+    if use_realtime and is_trading_hours() and data is not None:
+        rt = fetch_twse_realtime(stock_id)
+        if rt and rt.get('price'):
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            # 移除可能已存在的今日資料
+            data = [d for d in data if d.get('date') != today_str]
+            data.append({
+                'date': today_str,
+                'open': rt['open'],
+                'max': rt['high'],
+                'min': rt['low'],
+                'close': rt['price'],
+                'Trading_Volume': rt['volume'],
+                'stock_id': stock_id,
+            })
 
     # 附加股票名稱
     name = get_stock_name(stock_id)
@@ -608,35 +639,68 @@ def stock_holders():
     price_dict = {d.get('date'): d.get('close') for d in price_data} if price_data else {}
     share_dict = {d.get('date'): d.get('ForeignInvestmentSharesRatio', 0) for d in share_data} if share_data else {}
     
-    # 大戶籌碼與董監因 FinMind 鎖免費版，此處以股票代碼為 seed 產生模擬穩定波動供前端展示
-    dates = sorted(list(set(price_dict.keys()) | set(share_dict.keys())), reverse=True)
+    # 大戶籌碼與散戶籌碼改從 Yahoo 股市爬取真實資料
+    yahoo_url = f"https://tw.stock.yahoo.com/quote/{stock_id}/major-holders"
+    yahoo_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     
+    yahoo_data = []
+    try:
+        resp = req.get(yahoo_url, headers=yahoo_headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        lis = soup.find_all('li', class_='List(n)')
+        for li in lis:
+            row_div = li.find('div', class_=lambda x: x and 'table-row' in x)
+            if row_div:
+                cols = row_div.find_all('div', recursive=False)
+                if len(cols) >= 5:
+                    d_str = cols[0].text.strip().replace('/', '-')
+                    col1 = cols[1].text.strip().replace('%', '') # 大戶
+                    col2 = cols[2].text.strip().replace('%', '') # 董監與大戶
+                    col3 = cols[3].text.strip().replace('%', '') # 散戶
+                    if d_str and col1 and col1 != '-':
+                        yahoo_data.append({
+                            'date': d_str,
+                            'major_ratio': float(col1),
+                            'director_major_ratio': float(col2) if col2 and col2 != '-' else 0,
+                            'retail_ratio': float(col3) if col3 and col3 != '-' else 0
+                        })
+    except Exception as e:
+        logger.error("Yahoo 大戶籌碼 API 錯誤 [%s]: %s", stock_id, e)
+
     result = []
-    import random
-    random.seed(int(stock_id) if stock_id.isdigit() else 2330)
-    base_director = random.uniform(15.0, 35.0)
-    base_major = random.uniform(50.0, 75.0)
-
-    last_week_num = -1
-    for d_str in dates:
-        dt = datetime.strptime(d_str, "%Y-%m-%d")
-        year, week, weekday = dt.isocalendar()
-        if week != last_week_num:
-            last_week_num = week
-            # 產生模擬微調，讓歷史看起來有變化
-            base_director += random.uniform(-0.05, 0.05)
-            base_major += random.uniform(-0.3, 0.3)
-
-            result.append({
-                "date": d_str,
-                "foreign_ratio": share_dict.get(d_str, 0) or share_dict.get(dates[0], 0),
-                "major_ratio": round(base_major, 2),
-                "director_ratio": round(base_director, 2),
-                "price": price_dict.get(d_str, 0) or price_dict.get(dates[0], 0)
-            })
-            if len(result) >= 8:
-                break
+    # 以外資持股或價格的日期交集作為基準，或以 Yahoo 的日期為主
+    # 取 Yahoo 的前 8 筆
+    for item in yahoo_data[:8]:
+        d_str = item['date']
+        
+        # 尋找最近的交易日價格與外資持股 (因集保結算日通常在週五/週六，與交易日可能差 1~2 天)
+        closest_price = 0
+        closest_share = 0
+        # 往前找最多 5 天有資料的日子
+        target_date = datetime.strptime(d_str, "%Y-%m-%d")
+        for i in range(7):
+            check_date = (target_date - timedelta(days=i)).strftime("%Y-%m-%d")
+            if not closest_price and check_date in price_dict:
+                closest_price = price_dict[check_date]
+            if not closest_share and check_date in share_dict:
+                closest_share = share_dict[check_date]
                 
+        # 如果找不到，就用最新的一天
+        if not closest_price and price_dict:
+            closest_price = price_dict[list(price_dict.keys())[-1]]
+        if not closest_share and share_dict:
+            closest_share = share_dict[list(share_dict.keys())[-1]]
+
+        result.append({
+            "date": d_str,
+            "foreign_ratio": closest_share,
+            "major_ratio": item['major_ratio'],
+            "director_ratio": item['director_major_ratio'], # 相容原先前端欄位
+            "retail_ratio": item['retail_ratio'], # 新增散戶欄位
+            "price": closest_price
+        })
+
     return api_ok(result)
 
 
@@ -771,7 +835,7 @@ def stock_news():
 
     # 快取 Key
     cache_key = f"news_{stock_id}"
-    cached = get_cache(cache_key)
+    cached = api_cache.get(cache_key)
     if cached: return api_ok(cached)
 
     try:
@@ -803,7 +867,7 @@ def stock_news():
                     {"title": f"{stock_id} 財報發布後市場反應正向", "link": "#", "pubDate": "2024-02-24", "source": "模擬新聞"}
                 ]
 
-            set_cache(cache_key, news_list, expire=1800) # 快取 30 分鐘
+            api_cache.set(cache_key, news_list) # 快取
             return api_ok(news_list)
 
     except Exception as e:
@@ -815,7 +879,131 @@ def stock_news():
 # 啟動伺服器
 # ============================================================
 
+
+# ============================================================
+# 自訂多空選股掃描 (Screener)
+# ============================================================
+from concurrent.futures import ThreadPoolExecutor
+
+def analyze_single_stock(stock_id, conditions):
+    """分析單檔股票是否符合自訂條件"""
+    try:
+        # 由於需要MA20跟MACD，至少往前抓120天以上確保均線正確
+        start_date = (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # 取得歷史價格 (使用 FinMind)
+        hist = finmind_request("TaiwanStockPrice", data_id=stock_id, start_date=start_date, end_date=end_date)
+        
+        if not hist or len(hist) < 20: 
+            return None # 資料不足
+
+        # 將價格資料轉換成 DataFrame 並運算指標
+        import pandas as pd
+        import ta
+        
+        df = pd.DataFrame(hist)
+        df = df.dropna(subset=['close', 'max', 'min'])
+        
+        if len(df) < 20:
+            return None
+            
+        close = df['close'].astype(float)
+        high = df['max'].astype(float)
+        low = df['min'].astype(float)
+        
+        # 指標預運算與填補空值
+        ma20_list = ta.trend.SMAIndicator(close, window=20).sma_indicator().fillna(0).tolist()
+        stoch = ta.momentum.StochasticOscillator(high, low, close, window=9, smooth_window=3)
+        k_list = stoch.stoch().fillna(0).tolist()
+        d_list = stoch.stoch_signal().fillna(0).tolist()
+        macd = ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
+        hist_list = macd.macd_diff().fillna(0).tolist()
+        dif_list = macd.macd().fillna(0).tolist()
+        dea_list = macd.macd_signal().fillna(0).tolist()
+        
+        # 取最新一天的數值
+        last_price = float(df.iloc[-1]['close'])
+        ma20 = ma20_list[-1]
+        k = k_list[-1]
+        d = d_list[-1]
+        prev_k = k_list[-2] if len(k_list) > 1 else 0
+        prev_d = d_list[-2] if len(d_list) > 1 else 0
+        
+        macd_hist = hist_list[-1]
+        dif = dif_list[-1]
+        dea = dea_list[-1]
+        prev_dif = dif_list[-2] if len(dif_list) > 1 else 0
+        prev_dea = dea_list[-2] if len(dea_list) > 1 else 0
+
+        # 套用條件過濾
+        match = True
+        for cond in conditions:
+            if cond == 'price_above_ma20':
+                if not (last_price > ma20 and ma20 > 0): match = False
+            elif cond == 'price_below_ma20':
+                if not (last_price < ma20 and ma20 > 0): match = False
+            elif cond == 'kd_golden_cross':
+                if not (prev_k < prev_d and k >= d): match = False
+            elif cond == 'kd_death_cross':
+                if not (prev_k > prev_d and k <= d): match = False
+            elif cond == 'macd_histogram_positive':
+                if not (macd_hist > 0): match = False
+            elif cond == 'macd_golden_cross':
+                if not (prev_dif < prev_dea and dif >= dea): match = False
+            elif cond == 'macd_entanglement':
+                # MACD糾纏：近 4 日內 DIF 與 DEA 的差值(亦即 histogram)絕對值都極小
+                # 設定門檻：過去四根柱狀體絕對值的最大值，小於等於個股當前價格的 0.15% (視為貼合平移)
+                if len(hist_list) < 4:
+                    match = False
+                else:
+                    max_abs_hist = max(abs(h) for h in hist_list[-4:])
+                    if max_abs_hist > (last_price * 0.0015): 
+                        match = False
+                
+        if match:
+            return {
+                "stock_id": stock_id,
+                "stock_name": get_stock_name(stock_id),
+                "close": last_price,
+                "ma20": ma20,
+                "k": k,
+                "d": d,
+                "macd_hist": macd_hist
+            }
+        return None
+    except Exception as e:
+        print(f"分析 {stock_id} 發生錯誤: {e}")
+        return None
+
+@app.route('/api/stock/screen', methods=['POST'])
+def stock_screen():
+    """平行掃描多檔股票是否符合技術面條件"""
+    data = request.get_json(silent=True) or {}
+    stock_ids = data.get('stock_ids', [])
+    conditions = data.get('conditions', [])
+    
+    if not stock_ids:
+        return api_error("未提供待掃描股票代碼")
+    if not conditions:
+        return api_ok([]) # 無條件直接回傳空陣列
+
+    results = []
+    # 使用 ThreadPoolExecutor 平行發送查詢，加速多檔股票的過濾
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(analyze_single_stock, sid, conditions) for sid in stock_ids]
+        for f in futures:
+            res = f.result()
+            if res:
+                results.append(res)
+                
+    return api_ok(results)
+
 if __name__ == '__main__':
-    logger.info("🚀 台灣股票資訊查詢工具 — 伺服器啟動中...")
-    logger.info("📡 請在瀏覽器開啟 http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    # 確保 app.run 位於真正檔案結尾之前被取代或保留
+    pass
+
+
+if __name__ == '__main__':
+    print('啟動後端 API 伺服器，運行於 http://127.0.0.1:5001')
+    app.run(host='0.0.0.0', port=5001, debug=True, threaded=True)

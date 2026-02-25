@@ -13,7 +13,13 @@ const state = {
     stockId: '',
     stockName: '',
     dateRange: '6m',
+    isAdjusted: false, // 判斷是否開啟還原日線
 };
+
+// 原始存放區，供還原切換使用
+let originalPriceData = null;
+let adjustedFactorsData = null;
+let currentIndicatorsResp = null;
 
 // ============================================================
 // 初始化
@@ -94,6 +100,12 @@ function bindEvents() {
 
     // 主圖指標切換
     document.getElementById('indicatorToggles')?.addEventListener('click', (e) => {
+        if (e.target.id === 'adjFactorToggle') {
+            e.target.classList.toggle('active');
+            state.isAdjusted = e.target.classList.contains('active');
+            applyAdjustedPrice();
+            return;
+        }
         if (e.target.classList.contains('indicator-btn')) {
             e.target.classList.toggle('active');
             renderKlineChart();
@@ -126,11 +138,13 @@ function bindEvents() {
                             const instances = {
                                 institutionalChart: institutionalChartInstance,
                                 concentrationChart: concentrationChartInstance,
+                                holdersChart: holdersChartInstance,
                                 marginChart: marginChartInstance,
                                 shareholdingChart: shareholdingChartInstance,
                                 revenueChart: revenueChartInstance,
                                 financialChart: financialChartInstance,
                                 profitabilityChart: profitabilityChartInstance,
+                                dupontChart: dupontChartInstance,
                             };
                             instances[chart.id]?.resize();
                         }
@@ -238,8 +252,8 @@ async function loadAllData() {
     try {
         // 第一批：最重要的資料（K線 + 指標 + PER）
         const [priceResp, indResp, perResp] = await Promise.all([
-            fetchAPI(`/api/stock/price?id=${id}&start=${start}&end=${end}`),
-            fetchAPI(`/api/stock/indicators?id=${id}&start=${start}&end=${end}`),
+            fetchAPI(`/api/stock/price?id=${id}&start=${start}&end=${end}&realtime=1`),
+            fetchAPI(`/api/stock/indicators?id=${id}&start=${start}&end=${end}&realtime=1`),
             fetchAPI(`/api/stock/per?id=${id}`),
         ]);
 
@@ -294,7 +308,7 @@ async function loadAllData() {
         // 第二批：延遲載入籌碼面 + 基本面（降低 API 壓力）
         setTimeout(async () => {
             try {
-                const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp, newsResp, longPriceResp, adjResp] = await Promise.all([
+                const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp, longPriceResp, adjResp] = await Promise.all([
                     fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`, 1, true),
                     fetchAPI(`/api/stock/holders?id=${id}`),
                     fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`),
@@ -303,10 +317,14 @@ async function loadAllData() {
                     fetchAPI(`/api/stock/revenue?id=${id}`),
                     fetchAPI(`/api/stock/financial?id=${id}`),
                     fetchAPI(`/api/stock/balance-sheet?id=${id}`),
-                    fetchAPI(`/api/stock/news?id=${id}`),
                     fetchAPI(`/api/stock/price?id=${id}&start=${getYearAgoDate(2)}&end=${end}`),
                     fetchAPI(`/api/stock/adjusted-factors?id=${id}`) // 新增除權息還原系數
                 ]);
+
+                // 儲存原始除權息與股價備用
+                originalPriceData = priceResp?.data || priceResp;
+                adjustedFactorsData = adjResp;
+                currentIndicatorsResp = indResp;
 
                 // instResp 是完整 JSON { status, data, consecutive }
                 if (instResp && instResp.data) {
@@ -320,15 +338,18 @@ async function loadAllData() {
                     // 若 holdResp 是陣列，代表 fetchAPI 已經幫忙解構出 data
                     // 若它是物件而且有 data 屬性，就取 data
                     const hData = Array.isArray(holdResp) ? holdResp : (holdResp.data || []);
-                    if (hData.length > 0) renderHoldersTable(hData);
+                    if (hData.length > 0) {
+                        renderHoldersChart(hData);
+                        renderHoldersTable(hData);
+                    }
                 }
 
                 if (finResp) renderEpsTable(finResp, longPriceResp || priceResp?.data || priceResp, adjResp);
                 if (revResp) renderRevenueTable(revResp);
-                if (finResp && bsResp) renderProfitabilityMatrix(finResp, bsResp);
-
-                // 渲染新聞
-                renderStockNews(newsResp);
+                if (finResp && bsResp) {
+                    renderProfitabilityMatrix(finResp, bsResp);
+                    renderDupontAnalysis(finResp, bsResp);
+                }
 
                 // 統一 resize 處理（籌碼面 + 基本面圖表）
                 setupChartResize();
@@ -404,13 +425,140 @@ function updatePriceDisplay(latest, prev) {
     }
 }
 
+// ============================================================
+// 除權息還原計算邏輯
+// ============================================================
+
+function applyAdjustedPrice() {
+    if (!originalPriceData || !originalPriceData.length) return;
+
+    if (!state.isAdjusted || !adjustedFactorsData || adjustedFactorsData.length === 0) {
+        // 取消還原：用原始資料重繪
+        if (currentIndicatorsResp) {
+            initKlineChart(originalPriceData, currentIndicatorsResp);
+            initIndicatorChart(currentIndicatorsResp);
+        }
+        return;
+    }
+
+    // 將除權息資料按日期降冪排列 (由新到舊)
+    // FinMind 的除權息交易日位於 CashExDividendTradingDate 或 StockExDividendTradingDate
+    const getExDate = d => d.CashExDividendTradingDate || d.StockExDividendTradingDate || d.date;
+    const sortedDividends = [...adjustedFactorsData].sort((a, b) => getExDate(b).localeCompare(getExDate(a)));
+
+    // 深拷貝一份價格與指標資料避免污染原始資料
+    const newPriceData = JSON.parse(JSON.stringify(originalPriceData));
+    const newIndData = currentIndicatorsResp ? JSON.parse(JSON.stringify(currentIndicatorsResp)) : null;
+
+    // 由新到舊遍歷每個股價，根據日期找出適用的總還原倍數
+    let currentMultiplier = 1.0;
+    let divIndex = 0; // 對應 sortedDividends 的索引
+
+    // 價格資料是由舊到新，因此我們從最後一天（最新）往前算
+    for (let i = newPriceData.length - 1; i >= 0; i--) {
+        const pd = newPriceData[i];
+
+        // 檢查是否跨越了某個除權除息日
+        // divIndex 若 < 陣列長度，且股價日期 小於 除權息日，代表這天及之前的股價必須還原
+        while (divIndex < sortedDividends.length && pd.date < getExDate(sortedDividends[divIndex])) {
+            const div = sortedDividends[divIndex];
+            // 計算這個除權息事件產生的還原乘數 (簡化計算：(前一天收盤 - 現金股息) / 前一天收盤)
+            const cash = div.CashEarningsDistribution || 0;
+            const stock = div.StockEarningsDistribution || 0;
+
+            // 找出最靠近除權日前一天的股價當作基準價
+            let refPrice = pd.close;
+            if (i + 1 < newPriceData.length) refPrice = originalPriceData[i + 1].close; // 基準價應為除權前一日(即最新的一天)收盤
+
+            if (refPrice > 0) {
+                // 還原公式：係數 = (P - 現金) / (P * (1 + 股票配發率))
+                const stockRate = stock / 10; // 股票股利每張 1000 股配發 X 元
+                const factor = (refPrice - cash) / (refPrice * (1 + stockRate));
+                currentMultiplier *= factor;
+            }
+            divIndex++;
+        }
+
+        // 乘上還原係數 (若日期大於等於最新的除權日，Multiplier 為 1 不變)
+        if (currentMultiplier !== 1.0) {
+            pd.open = Number((pd.open * currentMultiplier).toFixed(2));
+            pd.close = Number((pd.close * currentMultiplier).toFixed(2));
+            pd.max = Number((pd.max * currentMultiplier).toFixed(2));
+            pd.min = Number((pd.min * currentMultiplier).toFixed(2));
+        }
+    }
+
+    // 處理指標資料 (只處理跟價格絕對值有關的指標，不處理 RSI, KD, MACD 柱等波動率)
+    if (newIndData) {
+        // 重新由新往前乘上 currentMultiplier
+        currentMultiplier = 1.0;
+        divIndex = 0;
+        const indDates = newIndData.date;
+
+        for (let i = indDates.length - 1; i >= 0; i--) {
+            const dateStr = indDates[i];
+
+            while (divIndex < sortedDividends.length && dateStr < getExDate(sortedDividends[divIndex])) {
+                const div = sortedDividends[divIndex];
+                const cash = div.CashEarningsDistribution || 0;
+                const stock = div.StockEarningsDistribution || 0;
+
+                // 找出相同日期的原始股價
+                let refPrice = null;
+                const exDateStr = getExDate(sortedDividends[divIndex]);
+                const priceIdx = originalPriceData.findIndex(p => p.date === exDateStr);
+                if (priceIdx > 0) refPrice = originalPriceData[priceIdx - 1].close; // 前一天
+                if (!refPrice && originalPriceData.length > 0) refPrice = originalPriceData[originalPriceData.length - 1].close;
+
+                if (refPrice > 0) {
+                    const factor = (refPrice - cash) / (refPrice * (1 + stock / 10));
+                    currentMultiplier *= factor;
+                }
+                divIndex++;
+            }
+
+            if (currentMultiplier !== 1.0) {
+                ['ma5', 'ma10', 'ma20', 'ma60', 'ma120', 'bb_upper', 'bb_middle', 'bb_lower', 'vwap'].forEach(key => {
+                    if (newIndData[key] && newIndData[key][i]) {
+                        newIndData[key][i] = Number((newIndData[key][i] * currentMultiplier).toFixed(2));
+                    }
+                });
+            }
+        }
+    }
+
+    // 重繪圖表
+    initKlineChart(newPriceData, newIndData);
+    if (newIndData) initIndicatorChart(newIndData);
+}
+
 function showLoading(elementId) {
     const el = document.getElementById(elementId);
-    if (el) {
+    if (!el) return;
+
+    if (elementId.includes('Chart')) {
+        // 圖表骨架
         el.innerHTML = `
-            <div class="loading-spinner">
-                <div class="spinner"></div>
-                <span>載入中...</span>
+            <div style="width: 100%; height: 100%; padding: 10px;">
+                <div class="skeleton skeleton-chart"></div>
+            </div>
+        `;
+    } else if (elementId.includes('Table') || elementId.includes('Matrix')) {
+        // 表格骨架
+        el.innerHTML = `
+            <div style="width: 100%; padding: 10px;">
+                <div class="skeleton skeleton-table-row"></div>
+                <div class="skeleton skeleton-table-row"></div>
+                <div class="skeleton skeleton-table-row"></div>
+                <div class="skeleton skeleton-table-row" style="width: 70%;"></div>
+            </div>
+        `;
+    } else {
+        // 預設純文字骨架
+        el.innerHTML = `
+            <div style="width: 100%; padding: 10px;">
+                <div class="skeleton skeleton-text long"></div>
+                <div class="skeleton skeleton-text short"></div>
             </div>
         `;
     }
@@ -432,6 +580,7 @@ function setupChartResize() {
         revenueChartInstance?.resize();
         financialChartInstance?.resize();
         profitabilityChartInstance?.resize();
+        dupontChartInstance?.resize();
     });
 }
 

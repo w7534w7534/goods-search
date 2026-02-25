@@ -355,11 +355,24 @@ function renderConcentrationChart(instData, priceData) {
             },
             splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
         },
-        dataZoom: [{
-            type: 'inside',
-            start: 70,
-            end: 100,
-        }],
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 60,
+                end: 100,
+            },
+            {
+                type: 'slider',
+                start: 60,
+                end: 100,
+                height: 20,
+                bottom: 0,
+                borderColor: 'transparent',
+                fillerColor: 'rgba(59, 130, 246, 0.15)',
+                handleStyle: { color: '#3b82f6' },
+                textStyle: { color: '#64748b' },
+            }
+        ],
         series: [
             {
                 name: '單日集中度',
@@ -462,11 +475,24 @@ function renderMarginChart(data) {
                 splitLine: { show: false },
             }
         ],
-        dataZoom: [{
-            type: 'inside',
-            start: 60,
-            end: 100,
-        }],
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 60,
+                end: 100,
+            },
+            {
+                type: 'slider',
+                start: 60,
+                end: 100,
+                height: 20,
+                bottom: 0,
+                borderColor: 'transparent',
+                fillerColor: 'rgba(59, 130, 246, 0.15)',
+                handleStyle: { color: '#3b82f6' },
+                textStyle: { color: '#64748b' },
+            }
+        ],
         series: [
             {
                 name: '融資餘額',
@@ -518,6 +544,114 @@ function renderMarginChart(data) {
 // 大戶籌碼表格
 // ============================================================
 
+function renderHoldersChart(data) {
+    const chartDom = document.getElementById('holdersChart');
+    if (!chartDom) return;
+    if (holdersChartInstance) holdersChartInstance.dispose();
+    holdersChartInstance = echarts.init(chartDom);
+
+    if (!data || data.length === 0) {
+        showEmpty(chartDom, '暫無大戶籌碼歷史資料');
+        return;
+    }
+
+    // 資料由近到遠，需反轉為由遠到近繪製
+    const reversedData = [...data].reverse();
+    const dates = reversedData.map(d => d.date.substring(5)); // M-D
+    const majorRatios = reversedData.map(d => d.major_ratio || 0);
+    const retailRatios = reversedData.map(d => d.retail_ratio || 0);
+    const prices = reversedData.map(d => d.price || 0);
+
+    const option = {
+        backgroundColor: 'transparent',
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: 'rgba(17, 24, 39, 0.95)',
+            borderColor: 'rgba(255,255,255,0.08)',
+            textStyle: { color: '#f1f5f9', fontSize: 12 },
+        },
+        legend: {
+            data: ['千張大戶持股', '散戶持股', '股價'],
+            textStyle: { color: '#94a3b8', fontSize: 11 },
+            top: 0
+        },
+        grid: { left: 45, right: 45, top: 30, bottom: 25 },
+        xAxis: {
+            type: 'category',
+            data: dates,
+            axisLine: { lineStyle: { color: '#334155' } },
+            axisLabel: { color: '#64748b', fontSize: 10 },
+            axisTick: { show: false }
+        },
+        yAxis: [
+            {
+                type: 'value',
+                name: '持股比例(%)',
+                position: 'left',
+                axisLine: { show: false },
+                axisLabel: { color: '#64748b', fontSize: 10, formatter: '{value}%' },
+                splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
+                scale: true
+            },
+            {
+                type: 'value',
+                name: '股價',
+                position: 'right',
+                axisLine: { show: false },
+                axisLabel: { color: '#64748b', fontSize: 10 },
+                splitLine: { show: false },
+                scale: true
+            }
+        ],
+        dataZoom: [
+            {
+                type: 'inside',
+                start: 60,
+                end: 100,
+            },
+            {
+                type: 'slider',
+                start: 60,
+                end: 100,
+                height: 20,
+                bottom: 0,
+                borderColor: 'transparent',
+                fillerColor: 'rgba(59, 130, 246, 0.15)',
+                handleStyle: { color: '#3b82f6' },
+                textStyle: { color: '#64748b' },
+            }
+        ],
+        series: [
+            {
+                name: '千張大戶持股',
+                type: 'bar',
+                data: majorRatios,
+                itemStyle: { color: '#3b82f6', borderRadius: [2, 2, 0, 0] },
+                barWidth: '35%'
+            },
+            {
+                name: '散戶持股',
+                type: 'bar',
+                data: retailRatios,
+                itemStyle: { color: '#f59e0b', borderRadius: [2, 2, 0, 0] },
+                barWidth: '35%'
+            },
+            {
+                name: '股價',
+                type: 'line',
+                yAxisIndex: 1,
+                data: prices,
+                lineStyle: { color: '#ef4444', width: 2 },
+                symbol: 'circle',
+                symbolSize: 4,
+                smooth: true
+            }
+        ]
+    };
+
+    holdersChartInstance.setOption(option);
+}
+
 function renderHoldersTable(data) {
     const container = document.getElementById('majorHoldersTable');
     if (!container) return;
@@ -531,11 +665,12 @@ function renderHoldersTable(data) {
         <table class="data-table" style="font-feature-settings: 'tnum';">
             <thead>
                 <tr>
-                    <th style="border-right:1px solid rgba(255,255,255,0.05)">年度/日期</th>
-                    <th style="text-align:right">外資籌碼</th>
-                    <th style="text-align:right">大戶籌碼<br><span style="font-size:10px;color:#64748b;font-weight:400">(限制:無資料)</span></th>
-                    <th style="text-align:right">董監持股<br><span style="font-size:10px;color:#64748b;font-weight:400">(限制:無資料)</span></th>
-                    <th style="text-align:right; border-left:1px solid rgba(255,255,255,0.05)">股價</th>
+                    <th style="border-right:1px solid rgba(255,255,255,0.05)">日期</th>
+                    <th style="text-align:right">外資持股</th>
+                    <th style="text-align:right">千張大戶持股</th>
+                    <th style="text-align:right">董監及大戶</th>
+                    <th style="text-align:right">散戶持股</th>
+                    <th style="text-align:right; border-left:1px solid rgba(255,255,255,0.05)">收盤價</th>
                 </tr>
             </thead>
             <tbody>
@@ -546,14 +681,16 @@ function renderHoldersTable(data) {
         const foreignStr = r.foreign_ratio ? r.foreign_ratio.toFixed(2) + '%' : '—';
         const majorStr = r.major_ratio ? r.major_ratio.toFixed(2) + '%' : '—';
         const dirStr = r.director_ratio ? r.director_ratio.toFixed(2) + '%' : '—';
+        const retailStr = r.retail_ratio ? r.retail_ratio.toFixed(2) + '%' : '—';
         const priceStr = r.price ? r.price.toFixed(1) : '—';
 
         html += `
             <tr>
                 <td style="color:#94a3b8; border-right:1px solid rgba(255,255,255,0.02)">${dateStr}</td>
-                <td style="text-align:right; font-weight:500">${foreignStr}</td>
-                <td style="text-align:right">${majorStr}</td>
+                <td style="text-align:right; font-weight:500; color:#32c5ff">${foreignStr}</td>
+                <td style="text-align:right; color:#3b82f6">${majorStr}</td>
                 <td style="text-align:right">${dirStr}</td>
+                <td style="text-align:right; color:#f59e0b">${retailStr}</td>
                 <td style="text-align:right; font-weight:600; color:#64748b; border-left:1px solid rgba(255,255,255,0.02)">${priceStr}</td>
             </tr>
         `;
