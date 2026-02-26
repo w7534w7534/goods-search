@@ -3,6 +3,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('addWatchlistInput');
     const addBtn = document.getElementById('addWatchlistBtn');
     const scanBtn = document.getElementById('startScanBtn');
+    const sectorSelect = document.getElementById('sectorSelect');
+    const scanSectorBtn = document.getElementById('scanSectorBtn');
     const resultContainer = document.getElementById('resultContainer');
     const resultBody = document.getElementById('resultBody');
     const resultCount = document.getElementById('resultCount');
@@ -44,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderWatchlist() {
         const list = WatchlistDB.get();
         if (list.length === 0) {
-            listContainer.innerHTML = '<div style="color:#94a3b8; padding: 12px; text-align:center;">目前沒有自選股</div>';
+            listContainer.innerHTML = '<div class="empty-state-list">目前沒有自選股</div>';
             scanBtn.disabled = true;
             return;
         }
@@ -117,13 +119,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // UI 狀態：掃描中
         const originalText = scanBtn.innerHTML;
-        scanBtn.innerHTML = '掃描運算中... <span style="animation: pulse 1s infinite alternate; display: inline-block;">⏳</span>';
+        scanBtn.innerHTML = '掃描運算中... <span class="pulse-icon">⏳</span>';
         scanBtn.disabled = true;
         resultContainer.style.display = 'none';
 
         try {
             // 發送請求給後端平行過濾引擎
-            const response = await fetch('/api/stock/screen', {
+            const resData = await fetchAPI('/api/stock/screen', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -132,53 +134,144 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
             });
 
-            if (!response.ok) {
-                throw new Error('掃描 API 回應錯誤');
-            }
-
-            const resData = await response.json();
-
-            if (resData.status !== 'ok') {
-                throw new Error(resData.message || '無法取得結果');
-            }
-
             // 渲染結果
             renderResults(resData.data);
 
         } catch (error) {
             console.error('掃描失敗:', error);
-            alert('選股掃描失敗，請檢查後端是否啟動與連線狀態。');
+            // 錯誤已由 fetchAPI 的 Toast 處理
         } finally {
             scanBtn.innerHTML = originalText;
             scanBtn.disabled = false;
         }
     });
 
+    // ==========================================
+    // 3. 類股批次掃描邏輯 (Sector Scan)
+    // ==========================================
+
+    async function loadSectors() {
+        if (!sectorSelect) return;
+        try {
+            const data = await fetchAPI('/api/stock/sectors');
+            let html = '<option value="">請選擇類股</option>';
+            data.data.forEach(s => {
+                html += `<option value="${s}">${s}</option>`;
+            });
+            sectorSelect.innerHTML = html;
+        } catch (e) {
+            console.error('載入類股清單失敗', e);
+            sectorSelect.innerHTML = '<option value="">載入失敗</option>';
+        }
+    }
+
+    if (scanSectorBtn) {
+        scanSectorBtn.addEventListener('click', async () => {
+            const sector = sectorSelect.value;
+            if (!sector) {
+                alert('請先選擇一個類股！');
+                return;
+            }
+
+            const checkedBoxes = Array.from(document.querySelectorAll('input[name="condition"]:checked'));
+            const conditions = checkedBoxes.map(cb => cb.value);
+            if (conditions.length === 0) {
+                alert('請至少勾選一個過濾條件！');
+                return;
+            }
+
+            const originalText = scanSectorBtn.innerHTML;
+            scanSectorBtn.innerHTML = '掃描運算中... <span class="pulse-icon">⏳</span>';
+            scanSectorBtn.disabled = true;
+            resultContainer.style.display = 'none';
+
+            try {
+                const resData = await fetchAPI('/api/stock/screen', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stock_ids: [],
+                        sector: sector,
+                        conditions: conditions
+                    })
+                });
+                renderResults(resData.data);
+            } catch (error) {
+                console.error('類股掃描失敗:', error);
+                // 錯誤已由 fetchAPI 處理
+            } finally {
+                scanSectorBtn.innerHTML = originalText;
+                scanSectorBtn.disabled = false;
+            }
+        });
+    }
+
+    loadSectors();
+
     function renderResults(results) {
         resultContainer.style.display = 'block';
         resultCount.textContent = results.length;
 
         if (results.length === 0) {
-            resultBody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 24px; color:#94a3b8;">沒有符合條件的股票</td></tr>`;
+            resultBody.innerHTML = `<tr><td colspan="6" class="empty-state-row">沒有符合條件的股票</td></tr>`;
             return;
         }
 
         let html = '';
         results.forEach(r => {
             const priceColor = r.close > r.ma20 ? '#ef4444' : '#10b981'; // 假設大於MA為紅
+
+            // 處理判斷邏輯顯示文字與樣式
+            const ma20Class = r.close > r.ma20 ? 'color:var(--accent-red)' : 'color:var(--accent-green)';
+            const ma20Text = r.close > r.ma20 ? '站上月線' : '跌破月線';
+
+            let kdState = '整理中';
+            let kdClass = 'status-badge neutral';
+            if (r.k > r.d && r.k < 80) {
+                kdState = '多頭發散';
+                kdClass = 'status-badge bullish';
+            } else if (r.k < r.d && r.k > 20) {
+                kdState = '空頭發散';
+                kdClass = 'status-badge bearish';
+            } else if (r.k >= 80) {
+                kdState = '高檔超買';
+                kdClass = 'status-badge bearish';
+            } else if (r.k <= 20) {
+                kdState = '低檔超賣';
+                kdClass = 'status-badge bullish';
+            }
+
+            // 籌碼情境處理
+            let chipHtml = '<span style="color:#64748b">—</span>';
+            if (r.chip_scenario) {
+                let badgeClass = 'neutral';
+                let icon = '🧊';
+                if (r.chip_scenario === '黃金交叉') { badgeClass = 'bullish'; icon = '🔥'; }
+                else if (r.chip_scenario === '死亡交叉') { badgeClass = 'bearish'; icon = '💀'; }
+                else if (r.chip_scenario === '高檔強軋') { badgeClass = 'warning'; icon = '🚀'; }
+
+                let detailHtml = '';
+                if (r.major_diff) {
+                    const mColor = parseFloat(r.major_diff) > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+                    const rColor = parseFloat(r.retail_diff) > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+                    detailHtml = `<div style="font-size:11px; margin-top:4px; font-feature-settings: 'tnum';">
+                        大戶 <span style="color:${mColor}">${r.major_diff}</span> | 散戶 <span style="color:${rColor}">${r.retail_diff}</span>
+                    </div>`;
+                }
+
+                chipHtml = `<div class="status-badge ${badgeClass}">${icon} ${r.chip_scenario}</div>${detailHtml}`;
+            }
+
             html += `
                 <tr>
-                    <td style="font-weight:600; font-size:1.1rem; color:#f1f5f9;">${r.stock_id}</td>
-                    <td style="color:#cbd5e1;">${r.stock_name || 'N/A'}</td>
-                    <td style="text-align:right; font-weight:600; color:${priceColor}">${r.close.toFixed(2)}</td>
-                    <td style="text-align:right; color:#94a3b8;">${r.ma20.toFixed(2)}</td>
-                    <td style="text-align:center;">
-                        <span style="font-size:0.85rem; padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
-                            K: ${r.k.toFixed(1)} / D: ${r.d.toFixed(1)}
-                        </span>
-                    </td>
-                    <td style="text-align:center;">
-                        <a href="/?id=${r.stock_id}" target="_blank" class="result-link">詳情 ↗</a>
+                    <td class="result-row-id">${r.stock_id}</td>
+                    <td class="result-row-name">${r.stock_name || 'N/A'}</td>
+                    <td class="text-right result-row-val" style="color:${priceColor}">${r.close.toFixed(2)}</td>
+                    <td class="text-right" style="${ma20Class}">${r.ma20.toFixed(2)}<br><small>${ma20Text}</small></td>
+                    <td class="text-center"><span class="${kdClass}">${kdState}</span><br><small style="color:#64748b;font-size:10px;">K:${r.k.toFixed(1)} D:${r.d.toFixed(1)}</small></td>
+                    <td class="text-center">${chipHtml}</td>
+                    <td class="text-center">
+                        <a href="/stock?id=${r.stock_id}&name=${encodeURIComponent(r.stock_name || '')}" target="_blank" class="result-link">詳情 ↗</a>
                     </td>
                 </tr>
             `;

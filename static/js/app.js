@@ -63,20 +63,14 @@ async function searchStocks(query) {
     }
 
     try {
-        const resp = await fetch(`/api/stock/search?q=${encodeURIComponent(query)}`);
-        const json = await resp.json();
+        const json = await fetchAPI(`/api/stock/search?q=${encodeURIComponent(query)}`);
         // 支援新格式 { status, data } 和舊格式（直接陣列）
         const data = json.data ?? json;
-        if (json.status === 'error') {
-            showToast(json.message || '搜尋失敗', 'error');
-            return;
-        }
         currentResults = Array.isArray(data) ? data : [];
         activeIndex = -1;
         renderDropdown(currentResults);
     } catch (err) {
         console.error('搜尋錯誤:', err);
-        showToast('搜尋連線失敗，請檢查伺服器', 'error');
     }
 }
 

@@ -22,11 +22,10 @@
     <div class="dashboard">
         <!-- 頂部導航 -->
         <header class="dash-header">
-            <div style="display:flex; align-items:center; gap:1.5rem; flex-wrap:wrap;">
-                <div style="display:flex; gap:12px;">
+            <div class="flex-header">
+                <div class="flex-gap-12">
                     <a href="/" class="dash-back">← 返回首頁</a>
-                    <a href="/screener.html" class="dash-back"
-                        style="color:#3b82f6; border:1px solid rgba(59,130,246,0.3); padding:4px 12px; border-radius:20px;">🎯
+                    <a href="/screener.html" class="dash-back btn-outline-blue">🎯
                         自訂多空選股器</a>
                 </div>
                 <div class="dash-stock-info">
@@ -48,37 +47,37 @@
             <div class="stat-card">
                 <div class="stat-label">本益比</div>
                 <div class="stat-value" id="perValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">本淨比</div>
                 <div class="stat-value" id="pbrValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">殖利率</div>
                 <div class="stat-value" id="yieldValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">成交量</div>
                 <div class="stat-value" id="volumeValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">最高</div>
                 <div class="stat-value" id="highValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">最低</div>
                 <div class="stat-value" id="lowValue">
-                    <div class="skeleton skeleton-text short" style="margin:0 auto;"></div>
+                    <div class="skeleton skeleton-text short mx-auto"></div>
                 </div>
             </div>
         </div>
@@ -91,7 +90,7 @@
             <button class="date-range-btn" data-range="1y">1 年</button>
             <button class="date-range-btn" data-range="2y">2 年</button>
             <button class="date-range-btn" data-range="5y">5 年</button>
-            <div style="margin-left:auto; display:flex; gap:0.5rem;">
+            <div class="ml-auto-flex">
                 <button class="export-btn" id="exportCsv" title="匯出 CSV">📥 CSV</button>
                 <button class="export-btn" id="exportPng" title="匯出圖表">📸 圖表</button>
             </div>
@@ -107,7 +106,7 @@
                 <button class="indicator-btn" data-indicator="bb">布林通道</button>
                 <button class="indicator-btn" data-indicator="vwap">VWAP</button>
                 <button class="indicator-btn pink" data-indicator="signal">📍 訊號</button>
-                <div style="flex: 1;"></div>
+                <div class="flex-1"></div>
                 <button class="indicator-btn" id="adjFactorToggle" title="還原除權息股價">🔄 還原日線</button>
             </div>
             <div class="chart-container" id="klineChart"></div>
@@ -144,23 +143,21 @@
                     <button class="tab-btn" data-tab="margin">融資融券</button>
                 </div>
                 <div class="tab-content active" id="tab-institutional">
-                    <div style="margin-bottom: 24px;">
-                        <div
-                            style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:12px;">
-                            <h3 style="color:#e2e8f0; font-size:15px; margin:0;">法人買賣總覽</h3>
-                            <span id="overviewDateStamp" style="color:#64748b; font-size:12px;"></span>
+                    <div class="mb-24">
+                        <div class="flex-between-end">
+                            <h3 class="section-title">法人買賣總覽</h3>
+                            <span id="overviewDateStamp" class="text-xs-muted"></span>
                         </div>
                         <div class="table-wrapper" id="institutionalOverviewTable"></div>
                     </div>
                     <div>
-                        <h3 style="color:#e2e8f0; font-size:15px; margin-bottom:12px;">法人逐日買賣超</h3>
+                        <h3 class="section-title mb-12">法人逐日買賣超</h3>
                         <div class="table-wrapper" id="institutionalDailyTable"></div>
                     </div>
                 </div>
                 <div class="tab-content" id="tab-concentration">
-                    <div
-                        style="margin-bottom: 12px; padding: 12px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 4px;">
-                        <p style="color: #94a3b8; font-size: 13px; margin: 0; line-height: 1.5;">
+                    <div class="info-box-blue">
+                        <p class="info-box-text">
                             <b>💡 說明：</b>由於取得真實分點資料受限，此圖表採用<b>「(三大法人淨買賣超張數 ÷ 全市場總成交量) × 100%」</b>作為短線籌碼集中度的替代指標。<br>
                             👉 <b>紅色正值</b>代表籌碼流向法人（集中）；<b>綠色負值</b>代表法人出貨給散戶（發散）。折線圖為近5日移動平均趨勢。
                         </p>
@@ -168,7 +165,7 @@
                     <div class="chart-container small" id="concentrationChart"></div>
                 </div>
                 <div class="tab-content" id="tab-majorHolders">
-                    <div class="chart-container medium" id="holdersChart" style="margin-bottom: 12px;"></div>
+                    <div class="chart-container medium mb-12" id="holdersChart"></div>
                     <div class="table-wrapper" id="majorHoldersTable"></div>
                 </div>
                 <div class="tab-content" id="tab-margin">
@@ -196,9 +193,8 @@
                     <div class="table-wrapper" id="profitabilityMatrix"></div>
                 </div>
                 <div class="tab-content" id="tab-dupont">
-                    <div
-                        style="margin-bottom: 12px; padding: 12px; background: rgba(16, 185, 129, 0.1); border-left: 3px solid #10b981; border-radius: 4px;">
-                        <p style="color: #94a3b8; font-size: 13px; margin: 0; line-height: 1.5;">
+                    <div class="info-box-green">
+                        <p class="info-box-text">
                             <b>💡 杜邦分析說明：</b>杜邦分析法將 <b>ROE (股東權益報酬率)</b> 拆解為三大關鍵指標，幫助釐清真實獲利來源：<br>
                             ① <b>稅後淨利率</b> (獲利能力)：每 100 元營收能留下多少淨利。代表產品競爭力與成本控管。<br>
                             ② <b>總資產周轉率</b> (營運效率)：公司運用資產創造營收的效率。代表翻桌率或產能利用率。<br>
@@ -206,7 +202,7 @@
                             ⚠️ <b>注意事項：</b>若 ROE 成長是靠「權益乘數」拉高，代表是舉債衝出來的績效，在升息或景氣反轉時會有較高的財務風險！最佳的情況是淨利率或周轉率提升帶動的 ROE 成長。
                         </p>
                     </div>
-                    <div class="chart-container medium" id="dupontChart" style="margin-bottom: 24px;"></div>
+                    <div class="chart-container medium mb-24" id="dupontChart"></div>
                     <div class="table-wrapper" id="dupontTable"></div>
                 </div>
             </div>
@@ -215,6 +211,7 @@
         </div>
 
         <script src="/js/common.js"></script>
+        <script src="/js/api.js"></script>
         <script src="/js/signal.js"></script>
         <script src="/js/realtime.js"></script>
         <script src="/js/chart.js"></script>

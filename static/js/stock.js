@@ -135,18 +135,7 @@ function bindEvents() {
                     setTimeout(() => {
                         const chart = content.querySelector('.chart-container');
                         if (chart && chart.id) {
-                            const instances = {
-                                institutionalChart: institutionalChartInstance,
-                                concentrationChart: concentrationChartInstance,
-                                holdersChart: holdersChartInstance,
-                                marginChart: marginChartInstance,
-                                shareholdingChart: shareholdingChartInstance,
-                                revenueChart: revenueChartInstance,
-                                financialChart: financialChartInstance,
-                                profitabilityChart: profitabilityChartInstance,
-                                dupontChart: dupontChartInstance,
-                            };
-                            instances[chart.id]?.resize();
+                            ChartManager.resize(chart.id);
                         }
                     }, 100);
                 }
@@ -164,8 +153,9 @@ function bindEvents() {
 
     // 匯出圖表 PNG
     document.getElementById('exportPng')?.addEventListener('click', () => {
-        if (klineChartInstance) {
-            const url = klineChartInstance.getDataURL({
+        const chart = ChartManager.get('klineChart');
+        if (chart) {
+            const url = chart.getDataURL({
                 type: 'png',
                 pixelRatio: 2,
                 backgroundColor: '#0a0e17',
@@ -206,37 +196,7 @@ function getYearAgoDate(years) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// ============================================================
-// API fetch + retry（支援新格式 { status, data, message }）
-// ============================================================
-
-async function fetchAPI(url, retries = 1, fullResponse = false) {
-    for (let i = 0; i <= retries; i++) {
-        try {
-            const resp = await fetch(url);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const json = await resp.json();
-
-            // 支援新格式：{ status: "ok|error", data: ..., message: "..." }
-            if (json.status === 'error') {
-                console.warn(`API 錯誤 (${url}): ${json.message}`);
-                showToast(json.message || 'API 回傳錯誤', 'error');
-                return null;
-            }
-            // fullResponse: 回傳完整 JSON（含 data 以外的額外欄位）
-            if (fullResponse) return json;
-            // 新格式回傳 data 欄位；舊格式相容（直接回傳內容）
-            return json.data !== undefined ? json.data : json;
-        } catch (err) {
-            if (i < retries) {
-                await new Promise(r => setTimeout(r, 1000));
-                continue;
-            }
-            console.error(`API 錯誤 (${url}):`, err);
-            return null;
-        }
-    }
-}
+// （已將 fetchAPI 移至獨立的 api.js 共用模組）
 
 // ============================================================
 // 資料載入（分批 + retry）
@@ -251,23 +211,21 @@ async function loadAllData() {
 
     try {
         // 第一批：最重要的資料（K線 + 指標 + PER）
-        const [priceResp, indResp, perResp] = await Promise.all([
-            fetchAPI(`/api/stock/price?id=${id}&start=${start}&end=${end}&realtime=1`),
-            fetchAPI(`/api/stock/indicators?id=${id}&start=${start}&end=${end}&realtime=1`),
+        const [chartResp, perResp] = await Promise.all([
+            fetchAPI(`/api/stock/chart-data?id=${id}&start=${start}&end=${end}&realtime=1`),
             fetchAPI(`/api/stock/per?id=${id}`),
         ]);
 
-        // priceResp 現在透過 fetchAPI 自動提取 data 欄位
-        if (priceResp && priceResp.data && priceResp.data.length > 0) {
-            // 新格式：{ name: "...", data: [...] }
-            const priceData = priceResp.data;
+        if (chartResp && chartResp.price && chartResp.price.length > 0) {
+            const priceData = chartResp.price;
+            const indResp = chartResp.indicators;
             const latest = priceData[priceData.length - 1];
             const prev = priceData.length > 1 ? priceData[priceData.length - 2] : latest;
 
-            if (priceResp.name && !state.stockName) {
-                state.stockName = priceResp.name;
-                document.getElementById('stockName').textContent = priceResp.name;
-                document.title = `${priceResp.name} (${id}) — 台股資訊查詢`;
+            if (chartResp.name && !state.stockName) {
+                state.stockName = chartResp.name;
+                document.getElementById('stockName').textContent = chartResp.name;
+                document.title = `${chartResp.name} (${id}) — 台股資訊查詢`;
             }
 
             updatePriceDisplay(latest, prev);
@@ -282,8 +240,10 @@ async function loadAllData() {
             if (indResp) {
                 initKlineChart(priceData, indResp);
                 initIndicatorChart(indResp);
-                if (klineChartInstance && indicatorChartInstance) {
-                    echarts.connect([klineChartInstance, indicatorChartInstance]);
+                const k1 = ChartManager.get('klineChart');
+                const i1 = ChartManager.get('indicatorChart');
+                if (k1 && i1) {
+                    echarts.connect([k1, i1]);
                 }
             }
 
@@ -291,46 +251,34 @@ async function loadAllData() {
             if (typeof startRealtimePolling === 'function') {
                 startRealtimePolling(id);
             }
-        } else if (Array.isArray(priceResp) && priceResp.length > 0) {
-            // 舊格式相容：直接是陣列
-            const latest = priceResp[priceResp.length - 1];
-            const prev = priceResp.length > 1 ? priceResp[priceResp.length - 2] : latest;
-            updatePriceDisplay(latest, prev);
-            if (indResp) {
-                initKlineChart(priceResp, indResp);
-                initIndicatorChart(indResp);
-                if (klineChartInstance && indicatorChartInstance) {
-                    echarts.connect([klineChartInstance, indicatorChartInstance]);
-                }
-            }
         }
 
         // 第二批：延遲載入籌碼面 + 基本面（降低 API 壓力）
         setTimeout(async () => {
             try {
                 const [instResp, holdResp, marginResp, shareResp, divResp, revResp, finResp, bsResp, longPriceResp, adjResp] = await Promise.all([
-                    fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`, 1, true),
-                    fetchAPI(`/api/stock/holders?id=${id}`),
-                    fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`),
-                    fetchAPI(`/api/stock/shareholding?id=${id}&start=${start}&end=${end}`),
-                    fetchAPI(`/api/stock/dividend?id=${id}`),
-                    fetchAPI(`/api/stock/revenue?id=${id}`),
-                    fetchAPI(`/api/stock/financial?id=${id}`),
-                    fetchAPI(`/api/stock/balance-sheet?id=${id}`),
-                    fetchAPI(`/api/stock/price?id=${id}&start=${getYearAgoDate(2)}&end=${end}`),
-                    fetchAPI(`/api/stock/adjusted-factors?id=${id}`) // 新增除權息還原系數
+                    fetchAPI(`/api/stock/institutional?id=${id}&start=${start}&end=${end}`, { retries: 1, fullResponse: true, throwOnError: false }),
+                    fetchAPI(`/api/stock/holders?id=${id}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/margin?id=${id}&start=${start}&end=${end}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/shareholding?id=${id}&start=${start}&end=${end}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/dividend?id=${id}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/revenue?id=${id}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/financial?id=${id}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/balance-sheet?id=${id}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/price?id=${id}&start=${getYearAgoDate(2)}&end=${end}`, { throwOnError: false }),
+                    fetchAPI(`/api/stock/adjusted-factors?id=${id}`, { throwOnError: false }) // 新增除權息還原系數
                 ]);
 
                 // 儲存原始除權息與股價備用
-                originalPriceData = priceResp?.data || priceResp;
+                originalPriceData = chartResp?.price;
                 adjustedFactorsData = adjResp;
-                currentIndicatorsResp = indResp;
+                currentIndicatorsResp = chartResp?.indicators;
 
                 // instResp 是完整 JSON { status, data, consecutive }
                 if (instResp && instResp.data) {
-                    renderInstitutionalTables(instResp.data, instResp.consecutive, shareResp, priceResp?.data || priceResp);
+                    renderInstitutionalTables(instResp.data, instResp.consecutive, shareResp, chartResp?.price);
                     // 由於沒有大戶持股，以法人資料代為計算短線籌碼集中度
-                    renderConcentrationChart(instResp.data, priceResp?.data || priceResp);
+                    renderConcentrationChart(instResp.data, chartResp?.price);
                 }
                 if (marginResp) renderMarginChart(marginResp);
 
@@ -379,7 +327,7 @@ function updateInfoCards(latest, perResp) {
 
     // 從 K 線資料取
     if (latest) {
-        setCardValue('volumeValue', formatNumber(latest.Trading_Volume));
+        setCardValue('volumeValue', Math.round(latest.Trading_Volume / 1000).toLocaleString(), '張');
         setCardValue('highValue', latest.max);
         setCardValue('lowValue', latest.min);
     }
@@ -573,14 +521,7 @@ function setupChartResize() {
     if (_chipResizeBound) return;
     _chipResizeBound = true;
     window.addEventListener('resize', () => {
-        institutionalChartInstance?.resize();
-        holdersChartInstance?.resize();
-        marginChartInstance?.resize();
-        shareholdingChartInstance?.resize();
-        revenueChartInstance?.resize();
-        financialChartInstance?.resize();
-        profitabilityChartInstance?.resize();
-        dupontChartInstance?.resize();
+        ChartManager.resizeAll();
     });
 }
 

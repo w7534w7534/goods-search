@@ -59,10 +59,9 @@ async function _fetchRealtimeQuote() {
     if (!_realtimeStockId) return;
 
     try {
-        const resp = await fetch(`/api/stock/realtime?id=${_realtimeStockId}`);
-        const json = await resp.json();
+        const json = await fetchAPI(`/api/stock/realtime?id=${_realtimeStockId}`, { fullResponse: true, throwOnError: false });
 
-        if (json.status !== 'ok' || !json.data) {
+        if (!json || json.status !== 'ok' || !json.data) {
             // 非交易時段或無數據 → 停止輪詢
             if (!json.data?.is_trading) {
                 stopRealtimePolling();
@@ -125,56 +124,20 @@ async function _fetchRealtimeIndicators() {
             ? getDateRange()
             : { start: '', end: '' };
 
-        const url = `/api/stock/indicators?id=${_realtimeStockId}&start=${start}&end=${end}&realtime=1`;
-        const resp = await fetch(url);
-        const json = await resp.json();
+        const url = `/api/stock/chart-data?id=${_realtimeStockId}&start=${start}&end=${end}&realtime=1`;
+        const json = await fetchAPI(url, { fullResponse: true, throwOnError: false });
 
-        if (json.status !== 'ok' || !json.data) return;
+        if (!json || json.status !== 'ok' || !json.data) return;
 
-        const indData = json.data;
+        const priceData = json.data.price;
+        const indData = json.data.indicators;
 
-        // 同時取得即時報價來更新 K 線
-        const rtResp = await fetch(`/api/stock/realtime?id=${_realtimeStockId}`);
-        const rtJson = await rtResp.json();
-
-        // 取得價格數據來更新 K 線最後一根蠟燭
-        const priceUrl = `/api/stock/price?id=${_realtimeStockId}&start=${start}&end=${end}`;
-        const priceResp = await fetch(priceUrl);
-        const priceJson = await priceResp.json();
-
-        if (priceJson.status === 'ok' && priceJson.data?.data) {
-            let priceData = priceJson.data.data;
-
-            // 如果有即時數據，附加或替換今天的蠟燭
-            if (rtJson.status === 'ok' && rtJson.data?.is_trading) {
-                const rt = rtJson.data;
-                const today = new Date().toISOString().split('T')[0];
-                // 用本地時間格式化今日日期
-                const now = new Date();
-                const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-                // 移除已存在的今日數據
-                priceData = priceData.filter(d => d.date !== todayLocal && d.date !== today);
-
-                // 附加即時蠟燭
-                priceData.push({
-                    date: todayLocal,
-                    open: rt.open,
-                    max: rt.high,
-                    min: rt.low,
-                    close: rt.price,
-                    Trading_Volume: rt.volume,
-                    stock_id: _realtimeStockId,
-                });
-            }
-
-            // 重新渲染圖表
-            if (typeof initKlineChart === 'function') {
-                initKlineChart(priceData, indData);
-            }
-            if (typeof initIndicatorChart === 'function') {
-                initIndicatorChart(indData);
-            }
+        // 重新渲染圖表
+        if (typeof initKlineChart === 'function') {
+            initKlineChart(priceData, indData);
+        }
+        if (typeof initIndicatorChart === 'function') {
+            initIndicatorChart(indData);
         }
 
         console.log('[即時] 指標已更新');

@@ -113,6 +113,16 @@ realtime_cache = SimpleCache(maxsize=50, ttl=10)
 _stock_list_cache = {"data": None, "timestamp": None, "df": None}
 _stock_list_lock = Lock()
 
+# Yahoo 籌碼獨立快取（1 天 TTL）
+yahoo_cache = SimpleCache(maxsize=100, ttl=86400)
+
+# 神秘金字塔籌碼快取（1 天 TTL）
+norway_cache = SimpleCache(maxsize=100, ttl=86400)
+
+import threading
+_in_flight = {}
+_in_flight_lock = threading.Lock()
+
 
 def get_stock_list():
     """取得股票清單（快取版，每日更新一次）"""
@@ -186,15 +196,37 @@ def finmind_request_raw(dataset, data_id=None, start_date=None, end_date=None):
 
 
 def finmind_request(dataset, data_id=None, start_date=None, end_date=None):
-    """帶快取的 FinMind API 請求"""
+    """帶快取與去重 (Cache Stampede Protection) 的 FinMind API 請求"""
     cache_key = f"{dataset}:{data_id}:{start_date}:{end_date}"
     cached = api_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    data = finmind_request_raw(dataset, data_id, start_date, end_date)
-    if data:
-        api_cache.set(cache_key, data)
+    with _in_flight_lock:
+        if cache_key in _in_flight:
+            event, result_box = _in_flight[cache_key]
+            is_fetching = False
+        else:
+            event = threading.Event()
+            result_box = []
+            _in_flight[cache_key] = (event, result_box)
+            is_fetching = True
+
+    if is_fetching:
+        try:
+            data = finmind_request_raw(dataset, data_id, start_date, end_date)
+            result_box.append(data)
+            if data:
+                api_cache.set(cache_key, data)
+        finally:
+            with _in_flight_lock:
+                del _in_flight[cache_key]
+            event.set()
+    else:
+        # 等待另一個 Thread 取回資料
+        event.wait()
+        data = result_box[0] if result_box else []
+
     return data
 
 
@@ -377,6 +409,10 @@ def stock_price():
     data = finmind_request("TaiwanStockPrice", data_id=stock_id,
                            start_date=start_date, end_date=end_date)
                            
+    if data:
+        # 過濾異常資料（停牌或收盤價為0）
+        data = [d for d in data if d.get('close', 0) > 0 and d.get('max', 0) > 0]
+                           
     use_realtime = request.args.get('realtime', '0') == '1'
     if use_realtime and is_trading_hours() and data is not None:
         rt = fetch_twse_realtime(stock_id)
@@ -400,9 +436,9 @@ def stock_price():
     return api_ok({"name": name, "data": data})
 
 
-@app.route('/api/stock/indicators')
-def stock_indicators():
-    """計算技術指標：RSI, MACD, KD, BB, OBV, MA, VWAP, DMI, W%R"""
+@app.route('/api/stock/chart-data')
+def stock_chart_data():
+    """合併計算技術指標與 K 線數據：RSI, MACD, KD, BB, OBV, MA, VWAP, DMI, W%R"""
     stock_id = request.args.get('id', '')
     start_date = request.args.get('start', '')
     end_date = request.args.get('end', '')
@@ -420,6 +456,12 @@ def stock_indicators():
 
     if not data:
         return api_error("無法取得股價資料", 404)
+
+    # 過濾異常資料（停牌或收盤價為0）
+    data = [d for d in data if d.get('close', 0) > 0 and d.get('max', 0) > 0]
+
+    if not data:
+        return api_error("該區間無有效交易資料", 404)
 
     df = pd.DataFrame(data)
     df['date'] = pd.to_datetime(df['date'])
@@ -439,7 +481,7 @@ def stock_indicators():
                 'max': rt['high'],
                 'min': rt['low'],
                 'close': rt['price'],
-                'Trading_Volume': rt['volume'],
+                'Trading_Volume': rt['volume'] * 1000,
                 'stock_id': stock_id,
             }])
             df = pd.concat([df, today_row], ignore_index=True)
@@ -518,6 +560,20 @@ def stock_indicators():
             start_idx = i
             break
 
+    # 建立 Price 輸出陣列
+    price_result = []
+    df_result = df.iloc[start_idx:]
+    for _, row in df_result.iterrows():
+        price_result.append({
+            'date': row['date'].strftime('%Y-%m-%d'),
+            'open': row['open'],
+            'max': row['max'],
+            'min': row['min'],
+            'close': row['close'],
+            'Trading_Volume': row['Trading_Volume'],
+            'stock_id': stock_id
+        })
+
     filtered_result = {}
     for key, values in result.items():
         filtered_result[key] = values[start_idx:]
@@ -530,7 +586,11 @@ def stock_indicators():
                 for v in values
             ]
 
-    return api_ok(filtered_result)
+    return api_ok({
+        "name": get_stock_name(stock_id),
+        "price": price_result,
+        "indicators": filtered_result
+    })
 
 
 @app.route('/api/stock/institutional')
@@ -639,44 +699,88 @@ def stock_holders():
     price_dict = {d.get('date'): d.get('close') for d in price_data} if price_data else {}
     share_dict = {d.get('date'): d.get('ForeignInvestmentSharesRatio', 0) for d in share_data} if share_data else {}
     
-    # 大戶籌碼與散戶籌碼改從 Yahoo 股市爬取真實資料
-    yahoo_url = f"https://tw.stock.yahoo.com/quote/{stock_id}/major-holders"
-    yahoo_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    
-    yahoo_data = []
-    try:
-        resp = req.get(yahoo_url, headers=yahoo_headers, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        lis = soup.find_all('li', class_='List(n)')
-        for li in lis:
-            row_div = li.find('div', class_=lambda x: x and 'table-row' in x)
-            if row_div:
-                cols = row_div.find_all('div', recursive=False)
-                if len(cols) >= 5:
-                    d_str = cols[0].text.strip().replace('/', '-')
-                    col1 = cols[1].text.strip().replace('%', '') # 大戶
-                    col2 = cols[2].text.strip().replace('%', '') # 董監與大戶
-                    col3 = cols[3].text.strip().replace('%', '') # 散戶
-                    if d_str and col1 and col1 != '-':
-                        yahoo_data.append({
-                            'date': d_str,
-                            'major_ratio': float(col1),
-                            'director_major_ratio': float(col2) if col2 and col2 != '-' else 0,
-                            'retail_ratio': float(col3) if col3 and col3 != '-' else 0
-                        })
-    except Exception as e:
-        logger.error("Yahoo 大戶籌碼 API 錯誤 [%s]: %s", stock_id, e)
+    # 爬取神秘金字塔 (norway.twsthr.info)
+    norway_cache_key = f"norway_{stock_id}"
+    norway_data = norway_cache.get(norway_cache_key)
+    if norway_data is None:
+        norway_data = []
+        norway_url = f"https://norway.twsthr.info/StockHolders.aspx?stock={stock_id}"
+        norway_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        try:
+            # 關閉 SSL 驗證以防憑證過期
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            resp = req.get(norway_url, headers=norway_headers, verify=False, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            detail_table = soup.find(id='Details')
+            if detail_table:
+                trs = detail_table.find_all('tr')
+                for tr in trs[1:]:  # 跳過表頭
+                    tds = tr.find_all('td')
+                    if len(tds) >= 14:
+                        date_str = tds[2].text.strip()
+                        if len(date_str) == 8 and date_str.isdigit():
+                            formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+                            total_holders = tds[4].text.strip().replace(',', '')
+                            major_400_ratio = tds[7].text.strip()
+                            major_1000_ratio = tds[13].text.strip()
+                            try:
+                                norway_data.append({
+                                    'date': formatted_date,
+                                    'total_holders': int(total_holders) if total_holders else 0,
+                                    'major_ratio': float(major_400_ratio) if major_400_ratio else 0,
+                                    'major_1000_ratio': float(major_1000_ratio) if major_1000_ratio else 0
+                                })
+                            except ValueError:
+                                pass
+                if norway_data:
+                    norway_cache.set(norway_cache_key, norway_data)
+        except Exception as e:
+            logger.error("神秘金字塔爬蟲 API 錯誤 [%s]: %s", stock_id, e)
+
+    # 爬取 Yahoo Finance 散戶比例
+    yahoo_cache_key = f"yahoo_{stock_id}"
+    yahoo_data = yahoo_cache.get(yahoo_cache_key)
+    if yahoo_data is None:
+        yahoo_data = []
+        yahoo_url = f"https://tw.stock.yahoo.com/quote/{stock_id}/major-holders"
+        yahoo_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        try:
+            resp = req.get(yahoo_url, headers=yahoo_headers, timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            lis = soup.find_all('li', class_='List(n)')
+            for li in lis:
+                row_div = li.find('div', class_=lambda x: x and 'table-row' in x)
+                if row_div:
+                    cols = row_div.find_all('div', recursive=False)
+                    if len(cols) >= 5:
+                        d_str = cols[0].text.strip().replace('/', '-')
+                        col3 = cols[3].text.strip().replace('%', '') # 散戶 (<50 張)
+                        if d_str:
+                            yahoo_data.append({
+                                'date': d_str,
+                                'retail_ratio': float(col3) if col3 and col3 != '-' else 0
+                            })
+            if yahoo_data:
+                yahoo_cache.set(yahoo_cache_key, yahoo_data)
+        except Exception as e:
+            logger.error("Yahoo 大戶籌碼 API 錯誤 [%s]: %s", stock_id, e)
 
     result = []
-    # 以外資持股或價格的日期交集作為基準，或以 Yahoo 的日期為主
-    # 取 Yahoo 的前 8 筆
-    for item in yahoo_data[:8]:
+    # 建立 Yahoo 散戶字典
+    yahoo_dict = {item['date']: item['retail_ratio'] for item in yahoo_data}
+
+    # 以 norway_data 為主（最多取近 10 筆）
+    for item in norway_data[:10]:
         d_str = item['date']
         
         # 尋找最近的交易日價格與外資持股 (因集保結算日通常在週五/週六，與交易日可能差 1~2 天)
         closest_price = 0
         closest_share = 0
+        closest_retail = 0
+        
         # 往前找最多 5 天有資料的日子
         target_date = datetime.strptime(d_str, "%Y-%m-%d")
         for i in range(7):
@@ -685,19 +789,25 @@ def stock_holders():
                 closest_price = price_dict[check_date]
             if not closest_share and check_date in share_dict:
                 closest_share = share_dict[check_date]
+            if not closest_retail and check_date in yahoo_dict:
+                closest_retail = yahoo_dict[check_date]
                 
         # 如果找不到，就用最新的一天
         if not closest_price and price_dict:
             closest_price = price_dict[list(price_dict.keys())[-1]]
         if not closest_share and share_dict:
             closest_share = share_dict[list(share_dict.keys())[-1]]
+        if not closest_retail and yahoo_dict:
+            closest_retail = yahoo_dict[list(yahoo_dict.keys())[-1]]
 
         result.append({
             "date": d_str,
             "foreign_ratio": closest_share,
-            "major_ratio": item['major_ratio'],
-            "director_ratio": item['director_major_ratio'], # 相容原先前端欄位
-            "retail_ratio": item['retail_ratio'], # 新增散戶欄位
+            "major_ratio": item['major_ratio'],           # >400張
+            "major_1000_ratio": item['major_1000_ratio'], # >1000張
+            "total_holders": item['total_holders'],       # 總股東人數
+            "director_ratio": 0, # 已棄用，保留相容
+            "retail_ratio": closest_retail,               # <50張
             "price": closest_price
         })
 
@@ -960,7 +1070,74 @@ def analyze_single_stock(stock_id, conditions):
                     max_abs_hist = max(abs(h) for h in hist_list[-4:])
                     if max_abs_hist > (last_price * 0.0015): 
                         match = False
+                        
+        # 如果包含籌碼條件，需要取得籌碼資料
+        has_chip_cond = any(c.startswith('chip_') for c in conditions)
+        major_diff_str = ""
+        retail_diff_str = ""
+        chip_scenario = ""
+        
+        if match and has_chip_cond:
+            yahoo_cache_key = f"yahoo_{stock_id}"
+            yahoo_data = yahoo_cache.get(yahoo_cache_key)
+            if not yahoo_data:
+                yahoo_data = []
+                yahoo_url = f"https://tw.stock.yahoo.com/quote/{stock_id}/major-holders"
+                yahoo_headers = {'User-Agent': 'Mozilla/5.0'}
+                try:
+                    resp = req.get(yahoo_url, headers=yahoo_headers, timeout=5)
+                    if resp.status_code == 200:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(resp.text, 'html.parser')
+                        lis = soup.find_all('li', class_='List(n)')
+                        for li in lis:
+                            rd = li.find('div', class_=lambda x: x and 'table-row' in x)
+                            if rd:
+                                cols = rd.find_all('div', recursive=False)
+                                if len(cols) >= 5:
+                                    d_str = cols[0].text.strip().replace('/', '-')
+                                    col1 = cols[1].text.strip().replace('%', '') # 大戶
+                                    col3 = cols[3].text.strip().replace('%', '') # 散戶
+                                    if d_str and col1 and col1 != '-':
+                                        yahoo_data.append({
+                                            'date': d_str,
+                                            'major_ratio': float(col1),
+                                            'retail_ratio': float(col3) if col3 and col3 != '-' else 0
+                                        })
+                        if yahoo_data:
+                            yahoo_cache.set(yahoo_cache_key, yahoo_data)
+                except Exception as e:
+                    pass
+            
+            if yahoo_data and len(yahoo_data) >= 2:
+                curr = yahoo_data[0]
+                prev = yahoo_data[1]
+                major_diff = curr['major_ratio'] - prev['major_ratio']
+                retail_diff = curr['retail_ratio'] - prev['retail_ratio']
                 
+                major_diff_str = f"{major_diff:+.2f}%"
+                retail_diff_str = f"{retail_diff:+.2f}%"
+                
+                if major_diff > 0 and retail_diff < 0:
+                    chip_scenario = '黃金交叉'
+                elif major_diff < 0 and retail_diff > 0:
+                    chip_scenario = '死亡交叉'
+                elif major_diff > 0 and retail_diff > 0:
+                    chip_scenario = '高檔強軋'
+                else:
+                    chip_scenario = '無人問津'
+                
+                for cond in conditions:
+                    if cond == 'chip_golden_cross':
+                        if not (major_diff > 0 and retail_diff < 0): match = False
+                    elif cond == 'chip_death_cross':
+                        if not (major_diff < 0 and retail_diff > 0): match = False
+                    elif cond == 'chip_divergence':
+                        # 高檔籌碼背離：股價高過 MA20 但大戶連兩降 (簡單邏輯: 大戶減少)
+                        if not (last_price > ma20 and major_diff < 0): match = False
+            else:
+                match = False # 缺乏籌碼資料無法判定
+
         if match:
             return {
                 "stock_id": stock_id,
@@ -969,22 +1146,50 @@ def analyze_single_stock(stock_id, conditions):
                 "ma20": ma20,
                 "k": k,
                 "d": d,
-                "macd_hist": macd_hist
+                "macd_hist": macd_hist,
+                "chip_scenario": chip_scenario,
+                "major_diff": major_diff_str,
+                "retail_diff": retail_diff_str
             }
         return None
     except Exception as e:
         print(f"分析 {stock_id} 發生錯誤: {e}")
         return None
 
+@app.route('/api/stock/sectors')
+def stock_sectors():
+    """取得所有可用的類股清單"""
+    _, df = get_stock_list()
+    if df is None or df.empty:
+        return api_error("無法取得股票清單", 503)
+    
+    # 取出所有不重複的產業類別 (過濾掉空值)
+    sectors = df['industry_category'].dropna().unique().tolist()
+    # 可以排除沒有分類的或是特定系統自帶的, 這裡簡單過濾空字串
+    sectors = [s for s in sectors if s.strip()]
+    sectors.sort()
+    
+    return api_ok(sectors)
+
+
 @app.route('/api/stock/screen', methods=['POST'])
 def stock_screen():
-    """平行掃描多檔股票是否符合技術面條件"""
+    """平行掃描多檔股票是否符合技術面條件 (支援類股批次掃描)"""
     data = request.get_json(silent=True) or {}
     stock_ids = data.get('stock_ids', [])
     conditions = data.get('conditions', [])
+    sector = data.get('sector', '')
+    
+    # 若有指定類股，則從股票清單中查出該類股所有股票代號加入 stock_ids
+    if sector:
+        _, df = get_stock_list()
+        if df is not None and not df.empty:
+            sector_stocks = df[df['industry_category'] == sector]['stock_id'].tolist()
+            # 聯集並去重
+            stock_ids = list(set(stock_ids + sector_stocks))
     
     if not stock_ids:
-        return api_error("未提供待掃描股票代碼")
+        return api_error("未提供待掃描股票代碼或找不到該類股之股票")
     if not conditions:
         return api_ok([]) # 無條件直接回傳空陣列
 

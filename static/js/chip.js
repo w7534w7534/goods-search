@@ -7,10 +7,7 @@
 // 三大法人買賣超圖表（含連買天數標示）
 // ============================================================
 
-let institutionalChartInstance = null;
-let holdersChartInstance = null;
-let marginChartInstance = null;
-let shareholdingChartInstance = null;
+// 圖表實例已改由 common.js 的 ChartManager 統一管理
 
 function renderInstitutionalTables(instData, consecutive, shareData, priceData) {
     const overviewContainer = document.getElementById('institutionalOverviewTable');
@@ -250,13 +247,12 @@ function renderInstitutionalTables(instData, consecutive, shareData, priceData) 
 // 籌碼集中度 / 替代持股顯示
 // ============================================================
 
-let concentrationChartInstance = null;
+// 區域圖表處理由 ChartManager 負責
 
 function renderConcentrationChart(instData, priceData) {
     const chartDom = document.getElementById('concentrationChart');
     if (!chartDom) return;
-    if (concentrationChartInstance) concentrationChartInstance.dispose();
-    concentrationChartInstance = echarts.init(chartDom);
+    const chart = ChartManager.init('concentrationChart', chartDom);
 
     if (!instData || instData.length === 0 || !priceData || priceData.length === 0) {
         showEmpty(chartDom, '資料不足以計算籌碼集中度');
@@ -313,9 +309,11 @@ function renderConcentrationChart(instData, priceData) {
         backgroundColor: 'transparent',
         title: {
             text: '模擬短線籌碼集中度 (法人淨買超 / 成交量)',
+            subtext: `資料擷取日期: ${dates[dates.length - 1] || '未知'}`,
             left: 'center',
             bottom: 0,
             textStyle: { color: '#94a3b8', fontSize: 10, fontWeight: 400 },
+            subtextStyle: { color: '#64748b', fontSize: 10 }
         },
         tooltip: {
             trigger: 'axis',
@@ -396,7 +394,7 @@ function renderConcentrationChart(instData, priceData) {
         ]
     };
 
-    concentrationChartInstance.setOption(option);
+    chart.setOption(option);
 }
 
 // ============================================================
@@ -406,8 +404,7 @@ function renderConcentrationChart(instData, priceData) {
 function renderMarginChart(data) {
     const chartDom = document.getElementById('marginChart');
     if (!chartDom) return;
-    if (marginChartInstance) marginChartInstance.dispose();
-    marginChartInstance = echarts.init(chartDom);
+    const chart = ChartManager.init('marginChart', chartDom);
 
     if (!data || data.length === 0) {
         showEmpty(chartDom, '暫無融資融券資料');
@@ -420,6 +417,12 @@ function renderMarginChart(data) {
     const shortMarginRatio = data.map(d => d.short_margin_ratio || 0);
 
     const option = {
+        title: {
+            subtext: `資料擷取日期: ${dates[dates.length - 1] || '未知'}`,
+            right: 15,
+            top: 0,
+            subtextStyle: { color: '#64748b', fontSize: 11 }
+        },
         backgroundColor: 'transparent',
         tooltip: {
             trigger: 'axis',
@@ -535,7 +538,7 @@ function renderMarginChart(data) {
         ]
     };
 
-    marginChartInstance.setOption(option);
+    chart.setOption(option);
 }
 
 
@@ -547,8 +550,7 @@ function renderMarginChart(data) {
 function renderHoldersChart(data) {
     const chartDom = document.getElementById('holdersChart');
     if (!chartDom) return;
-    if (holdersChartInstance) holdersChartInstance.dispose();
-    holdersChartInstance = echarts.init(chartDom);
+    const chart = ChartManager.init('holdersChart', chartDom);
 
     if (!data || data.length === 0) {
         showEmpty(chartDom, '暫無大戶籌碼歷史資料');
@@ -558,11 +560,65 @@ function renderHoldersChart(data) {
     // 資料由近到遠，需反轉為由遠到近繪製
     const reversedData = [...data].reverse();
     const dates = reversedData.map(d => d.date.substring(5)); // M-D
-    const majorRatios = reversedData.map(d => d.major_ratio || 0);
+    const major400Ratios = reversedData.map(d => d.major_ratio || 0);
+    const major1000Ratios = reversedData.map(d => d.major_1000_ratio || 0);
     const retailRatios = reversedData.map(d => d.retail_ratio || 0);
     const prices = reversedData.map(d => d.price || 0);
 
+    // AI 四大情境判定 (比較最新一週與前一週的趨勢)
+    let aiTagHtml = '';
+    if (reversedData.length >= 2) {
+        const curr = reversedData[reversedData.length - 1];
+        const prev = reversedData[reversedData.length - 2];
+        const majorDiff = curr.major_1000_ratio - prev.major_1000_ratio; // 預設使用千張大戶判定
+        const retailDiff = curr.retail_ratio - prev.retail_ratio;
+
+        let scenarioStr = '';
+        let colorStr = '';
+
+        if (majorDiff > 0 && retailDiff < 0) {
+            scenarioStr = '🔥 黃金交叉 (底部吃貨)';
+            colorStr = '#ef4444';
+        } else if (majorDiff < 0 && retailDiff > 0) {
+            scenarioStr = '💀 死亡交叉 (高檔出貨)';
+            colorStr = '#10b981';
+        } else if (majorDiff > 0 && retailDiff > 0) {
+            scenarioStr = '🚀 高檔強軋 (籌碼熱絡)';
+            colorStr = '#f59e0b';
+        } else {
+            scenarioStr = '🧊 無人問津 (流動冷清)';
+            colorStr = '#64748b';
+        }
+
+        aiTagHtml = ` AI 籌碼情境: {scenario|${scenarioStr}}`;
+    }
+
     const option = {
+        title: [
+            {
+                text: aiTagHtml,
+                textStyle: {
+                    rich: {
+                        scenario: {
+                            color: '#f8fafc',
+                            backgroundColor: 'rgba(255,255,255,0.1)',
+                            padding: [4, 8],
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 600
+                        }
+                    }
+                },
+                left: 0,
+                top: 0
+            },
+            {
+                text: `最後更新: ${reversedData[reversedData.length - 1]?.date || '未知'}`,
+                right: 0,
+                top: 0,
+                textStyle: { color: '#64748b', fontSize: 11, fontWeight: 'normal' }
+            }
+        ],
         backgroundColor: 'transparent',
         tooltip: {
             trigger: 'axis',
@@ -571,27 +627,33 @@ function renderHoldersChart(data) {
             textStyle: { color: '#f1f5f9', fontSize: 12 },
         },
         legend: {
-            data: ['千張大戶持股', '散戶持股', '股價'],
+            data: ['400張以上大戶', '千張大戶', '<50張散戶', '股價'],
             textStyle: { color: '#94a3b8', fontSize: 11 },
-            top: 0
+            top: 25,
+            selected: {
+                '400張以上大戶': false // 預設隱藏 400 張，讓畫面乾淨對比 1000 張與散戶
+            }
         },
-        grid: { left: 45, right: 45, top: 30, bottom: 25 },
+        grid: { left: 45, right: 45, top: 55, bottom: 25 },
         xAxis: {
             type: 'category',
             data: dates,
             axisLine: { lineStyle: { color: '#334155' } },
             axisLabel: { color: '#64748b', fontSize: 10 },
-            axisTick: { show: false }
+            axisTick: { show: false },
+            boundaryGap: false // 讓折線圖貼齊邊緣
         },
         yAxis: [
             {
                 type: 'value',
-                name: '持股比例(%)',
+                name: '持股(%)',
                 position: 'left',
                 axisLine: { show: false },
                 axisLabel: { color: '#64748b', fontSize: 10, formatter: '{value}%' },
                 splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } },
-                scale: true
+                scale: true,
+                min: function (value) { return Math.max(0, Math.floor(value.min - 1)); },
+                max: function (value) { return Math.min(100, Math.ceil(value.max + 1)); }
             },
             {
                 type: 'value',
@@ -606,50 +668,60 @@ function renderHoldersChart(data) {
         dataZoom: [
             {
                 type: 'inside',
-                start: 60,
+                start: 0,
                 end: 100,
-            },
-            {
-                type: 'slider',
-                start: 60,
-                end: 100,
-                height: 20,
-                bottom: 0,
-                borderColor: 'transparent',
-                fillerColor: 'rgba(59, 130, 246, 0.15)',
-                handleStyle: { color: '#3b82f6' },
-                textStyle: { color: '#64748b' },
             }
         ],
         series: [
             {
-                name: '千張大戶持股',
-                type: 'bar',
-                data: majorRatios,
-                itemStyle: { color: '#3b82f6', borderRadius: [2, 2, 0, 0] },
-                barWidth: '35%'
+                name: '400張以上大戶',
+                type: 'line',
+                data: major400Ratios,
+                lineStyle: { color: '#f43f5e', width: 2, type: 'dashed' },
+                itemStyle: { color: '#f43f5e' },
+                symbol: 'none',
+                smooth: true
             },
             {
-                name: '散戶持股',
-                type: 'bar',
+                name: '千張大戶',
+                type: 'line',
+                data: major1000Ratios,
+                lineStyle: { color: '#ef4444', width: 3 },
+                itemStyle: { color: '#ef4444' },
+                symbol: 'circle',
+                symbolSize: 6,
+                smooth: true,
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(239, 68, 68, 0.2)' },
+                        { offset: 1, color: 'rgba(239, 68, 68, 0.0)' }
+                    ])
+                }
+            },
+            {
+                name: '<50張散戶',
+                type: 'line',
                 data: retailRatios,
-                itemStyle: { color: '#f59e0b', borderRadius: [2, 2, 0, 0] },
-                barWidth: '35%'
+                lineStyle: { color: '#10b981', width: 2, type: 'dashed' },
+                itemStyle: { color: '#10b981' },
+                symbol: 'circle',
+                symbolSize: 6,
+                smooth: true
             },
             {
                 name: '股價',
                 type: 'line',
                 yAxisIndex: 1,
                 data: prices,
-                lineStyle: { color: '#ef4444', width: 2 },
-                symbol: 'circle',
-                symbolSize: 4,
+                lineStyle: { color: '#64748b', width: 1.5 },
+                itemStyle: { color: '#64748b' },
+                symbol: 'none',
                 smooth: true
             }
         ]
     };
 
-    holdersChartInstance.setOption(option);
+    chart.setOption(option);
 }
 
 function renderHoldersTable(data) {
@@ -667,9 +739,10 @@ function renderHoldersTable(data) {
                 <tr>
                     <th style="border-right:1px solid rgba(255,255,255,0.05)">日期</th>
                     <th style="text-align:right">外資持股</th>
-                    <th style="text-align:right">千張大戶持股</th>
-                    <th style="text-align:right">董監及大戶</th>
-                    <th style="text-align:right">散戶持股</th>
+                    <th style="text-align:right">>400張大戶</th>
+                    <th style="text-align:right; color:#ef4444">>1000張超級大戶</th>
+                    <th style="text-align:right"><50張散戶</th>
+                    <th style="text-align:right">總股東人數</th>
                     <th style="text-align:right; border-left:1px solid rgba(255,255,255,0.05)">收盤價</th>
                 </tr>
             </thead>
@@ -679,18 +752,20 @@ function renderHoldersTable(data) {
     data.forEach(r => {
         const dateStr = r.date ? r.date.replace(/-/g, '/') : '—';
         const foreignStr = r.foreign_ratio ? r.foreign_ratio.toFixed(2) + '%' : '—';
-        const majorStr = r.major_ratio ? r.major_ratio.toFixed(2) + '%' : '—';
-        const dirStr = r.director_ratio ? r.director_ratio.toFixed(2) + '%' : '—';
+        const major400Str = r.major_ratio ? r.major_ratio.toFixed(2) + '%' : '—';
+        const major1000Str = r.major_1000_ratio ? r.major_1000_ratio.toFixed(2) + '%' : '—';
         const retailStr = r.retail_ratio ? r.retail_ratio.toFixed(2) + '%' : '—';
+        const holdersStr = r.total_holders ? formatNumber(r.total_holders) : '—';
         const priceStr = r.price ? r.price.toFixed(1) : '—';
 
         html += `
             <tr>
                 <td style="color:#94a3b8; border-right:1px solid rgba(255,255,255,0.02)">${dateStr}</td>
                 <td style="text-align:right; font-weight:500; color:#32c5ff">${foreignStr}</td>
-                <td style="text-align:right; color:#3b82f6">${majorStr}</td>
-                <td style="text-align:right">${dirStr}</td>
-                <td style="text-align:right; color:#f59e0b">${retailStr}</td>
+                <td style="text-align:right; color:#f43f5e">${major400Str}</td>
+                <td style="text-align:right; font-weight:600; color:#ef4444">${major1000Str}</td>
+                <td style="text-align:right; color:#10b981">${retailStr}</td>
+                <td style="text-align:right; color:#a1a1aa">${holdersStr}</td>
                 <td style="text-align:right; font-weight:600; color:#64748b; border-left:1px solid rgba(255,255,255,0.02)">${priceStr}</td>
             </tr>
         `;

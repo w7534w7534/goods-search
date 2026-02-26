@@ -8,437 +8,13 @@
     <!-- 引入共用樣式與字體 -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
-    <style>
-        /* 專屬 screener.html 的排版調整 */
-        .screener-layout {
-            display: grid;
-            grid-template-columns: 320px 1fr;
-            gap: 24px;
-            align-items: start;
-        }
-
-        .watchlist-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            transition: background 0.2s;
-        }
-
-        .watchlist-item:hover {
-            background: rgba(255, 255, 255, 0.03);
-        }
-
-        .watchlist-item:last-child {
-            border-bottom: none;
-        }
-
-        .item-info {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .item-id {
-            font-weight: 600;
-            color: #f1f5f9;
-        }
-
-        .item-name {
-            font-size: 0.85rem;
-            color: #94a3b8;
-        }
-
-        .btn-remove {
-            background: rgba(2ef, 68, 68, 0.1);
-            color: #ef4444;
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-remove:hover {
-            background: #ef4444;
-            color: white;
-        }
-
-        .input-group {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .input-group textarea {
-            width: 100%;
-            padding: 12px;
-            box-sizing: border-box;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            color: #f1f5f9;
-            font-size: 0.95rem;
-            resize: vertical;
-            min-height: 80px;
-            font-family: inherit;
-        }
-
-        .input-group textarea:focus {
-            outline: none;
-            border-color: rgba(59, 130, 246, 0.5);
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
-        }
-
-        .input-group button {
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: white;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            align-self: flex-end;
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
-            width: 100%;
-        }
-
-        .input-group button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-        }
-
-        .filter-section {
-            margin-bottom: 24px;
-            background: rgba(0, 0, 0, 0.2);
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .filter-title {
-            font-size: 1rem;
-            font-weight: 600;
-            color: #60a5fa;
-            margin-bottom: 16px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .filter-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 16px;
-        }
-
-        .checkbox-label {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            color: #cbd5e1;
-            font-size: 0.95rem;
-            cursor: pointer;
-            user-select: none;
-            padding: 8px;
-            border-radius: 6px;
-            transition: background 0.2s;
-        }
-
-        .checkbox-label:hover {
-            background: rgba(255, 255, 255, 0.05);
-        }
-
-        .checkbox-label input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            accent-color: #3b82f6;
-            cursor: pointer;
-            margin-top: 2px;
-        }
-
-        .condition-desc {
-            font-size: 0.8rem;
-            color: #64748b;
-            margin-top: 4px;
-        }
-
-        .scan-actions {
-            display: flex;
-            justify-content: flex-end;
-            margin-top: 24px;
-            padding-top: 24px;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .btn-scan {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            border: none;
-            padding: 14px 36px;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .btn-scan:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
-        }
-
-        .btn-scan:disabled {
-            background: #475569;
-            box-shadow: none;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .result-link {
-            color: #60a5fa;
-            text-decoration: none;
-            font-weight: 600;
-            padding: 4px 12px;
-            border-radius: 4px;
-            background: rgba(96, 165, 250, 0.1);
-            transition: all 0.2s;
-        }
-
-        .result-link:hover {
-            background: #60a5fa;
-            color: #0f172a;
-        }
-
-        .header-nav {
-            display: flex;
-            gap: 16px;
-            align-items: center;
-        }
-
-        .btn-home {
-            color: #cbd5e1;
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 16px;
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.05);
-            transition: all 0.2s;
-            font-weight: 500;
-        }
-
-        .btn-home:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-        }
-
-        .theme-toggle-btn {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #e2e8f0;
-            padding: 8px 16px;
-            border-radius: 20px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
-        }
-
-        .theme-toggle-btn:hover {
-            background: rgba(255, 255, 255, 0.2);
-        }
-
-        /* 字體加粗放大排版 */
-        .card-title {
-            font-size: 1.25rem !important;
-            font-weight: 700 !important;
-        }
-
-        .filter-title {
-            font-size: 1.15rem !important;
-            font-weight: 700 !important;
-        }
-
-        .item-id {
-            font-size: 1.1rem !important;
-            font-weight: 700 !important;
-        }
-
-        .condition-name {
-            font-weight: 700 !important;
-            font-size: 1.05rem;
-            color: #f8fafc;
-        }
-
-        .condition-desc {
-            font-size: 0.9rem !important;
-        }
-
-        /* ===== 主題模式覆寫 (Dark/Light) ===== */
-
-        /* 深色模式強制覆寫 (避免被其他樣式覆寫) */
-        [data-theme="dark"] body {
-            background: #030712 !important;
-            /* 更深邃的黑 */
-            background-image: none !important;
-            color: #f8fafc;
-        }
-
-        [data-theme="dark"] body::before {
-            display: none !important;
-        }
-
-        /* 淺色模式完整支援覆寫 */
-        [data-theme="light"] body {
-            background: #f8fafc;
-            color: #0f172a;
-        }
-
-        [data-theme="light"] .glass-card {
-            background: rgba(255, 255, 255, 0.9);
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            color: #0f172a;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-
-        [data-theme="light"] .card-title,
-        [data-theme="light"] .item-id,
-        [data-theme="light"] .checkbox-label {
-            color: #1e293b;
-            border-bottom-color: rgba(0, 0, 0, 0.1);
-        }
-
-        [data-theme="light"] .filter-title {
-            color: #2563eb;
-            border-bottom-color: rgba(37, 99, 235, 0.2);
-        }
-
-        [data-theme="light"] .condition-name {
-            color: #0f172a;
-        }
-
-        [data-theme="light"] .condition-desc {
-            color: #475569;
-        }
-
-        [data-theme="light"] .filter-section {
-            background: rgba(255, 255, 255, 0.5);
-            border: 1px solid rgba(0, 0, 0, 0.05);
-        }
-
-        [data-theme="light"] .data-table th {
-            background: #f1f5f9;
-            color: #334155;
-            border-bottom-color: rgba(0, 0, 0, 0.1);
-        }
-
-        [data-theme="light"] .data-table td {
-            color: #334155;
-            border-bottom-color: rgba(0, 0, 0, 0.05);
-        }
-
-        [data-theme="light"] .input-group textarea {
-            background: #ffffff;
-            border-color: rgba(0, 0, 0, 0.1);
-            color: #0f172a;
-        }
-
-        [data-theme="light"] .theme-toggle-btn {
-            background: rgba(0, 0, 0, 0.05);
-            border-color: rgba(0, 0, 0, 0.1);
-            color: #334155;
-        }
-
-        [data-theme="light"] .theme-toggle-btn:hover {
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        [data-theme="light"] .btn-home {
-            color: #475569;
-            background: rgba(0, 0, 0, 0.05);
-        }
-
-        [data-theme="light"] .btn-home:hover {
-            color: #0f172a;
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        /* 第一張圖片：左側名單區塊的灰色大框 */
-        .watchlist-card {
-            border: 2px solid #64748b;
-            /* 加深灰色框 */
-            padding: 16px;
-            /* 原本的內距 */
-            border-radius: 16px;
-            /* 更圓潤的設計 */
-            background: rgba(15, 23, 42, 0.4);
-            /* 微暗底色襯托 */
-            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.2);
-            /* 增加立體感 */
-        }
-
-        [data-theme="light"] .watchlist-card {
-            border-color: #cbd5e1;
-            background: rgba(255, 255, 255, 0.6);
-            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
-        }
-
-        /* 第二張圖片：清單項目的淡紫色框 */
-        [data-theme="light"] .watchlist-item {
-            border: 1px solid #d8b4fe;
-            /* 淡紫色框 */
-            background: rgba(216, 180, 254, 0.1);
-            margin-bottom: 8px;
-            border-radius: 6px;
-        }
-
-        [data-theme="dark"] .watchlist-item,
-        .watchlist-item {
-            border: 1px solid #c084fc;
-            /* 淡紫色框 */
-            background: rgba(192, 132, 252, 0.1);
-            margin-bottom: 8px;
-            border-radius: 6px;
-        }
-
-        /* 第三張圖片：結果表格底色區塊 */
-        .result-card {
-            background: rgba(59, 130, 246, 0.05);
-            /* 帶有微藍色的明顯底色 */
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            border-radius: 12px;
-            padding: 24px;
-        }
-
-        [data-theme="light"] .result-card {
-            background: rgba(59, 130, 246, 0.08);
-            /* 淺色明顯底色 */
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        }
-
-        @media (max-width: 900px) {
-            .screener-layout {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="/css/screener.css">
 </head>
 
 <body>
+    <!-- Toast 通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+
     <!-- 頂部導覽列 -->
     <header class="header">
         <div class="header-container">
@@ -455,7 +31,7 @@
         </div>
     </header>
 
-    <div class="container" style="margin-top: 24px;">
+    <div class="container screener-main-container">
         <div class="screener-layout">
             <!-- 左側：自選股名單 -->
             <div class="glass-card watchlist-card">
@@ -465,126 +41,175 @@
 
                 <div class="input-group">
                     <textarea id="addWatchlistInput"
-                        placeholder="輸入代號，可一次貼上一整列或分行輸入&#10;範例：2330 2317 3231 或 2330,2317"></textarea>
+                        placeholder="輸入代號，可一次貼上或分行輸入&#10;範例：2330 2317 或 2330,2317"></textarea>
                     <button id="addWatchlistBtn">批量加入</button>
                 </div>
 
-                <div style="font-size: 0.85rem; color: #64748b; margin-bottom: 12px;">
+                <div class="hint-text">
                     💡 支援空白、逗號或換行分隔多檔股票
                 </div>
 
-                <div id="watchlistContainer" style="max-height: 500px; overflow-y: auto; padding-right: 8px;">
+                <div id="watchlistContainer">
                     <!-- JS 動態生成 -->
                 </div>
             </div>
 
-            <!-- 右側：選股條件與結果 -->
-            <div class="glass-card">
-                <div class="card-title">
-                    <span class="icon">🎯</span> 多空條件過濾
-                </div>
-
-                <div id="filterForm">
-                    <div class="filter-section">
-                        <div class="filter-title"><span class="icon">🐂</span> 做多條件 (Bullish Signals)</div>
-                        <div class="filter-grid">
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="condition" value="price_above_ma20">
-                                <div>
-                                    <div class="condition-name">股價站上月線 (MA20)</div>
-                                    <div class="condition-desc">收盤價大於 20 日移動平均線，代表中期趨勢偏多。</div>
-                                </div>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="condition" value="kd_golden_cross">
-                                <div>
-                                    <div class="condition-name">KD 黃金交叉</div>
-                                    <div class="condition-desc">K 值由下往上突破 D 值，為短線動能轉強訊號。</div>
-                                </div>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="condition" value="macd_histogram_positive">
-                                <div>
-                                    <div class="condition-name">MACD 柱狀體翻紅</div>
-                                    <div class="condition-desc">MACD 柱狀體由負轉正，表示多方力道開始增強。</div>
-                                </div>
-                            </label>
-                            <label class="checkbox-label" style="grid-column: 1 / -1;">
-                                <input type="checkbox" name="condition" value="macd_golden_cross">
-                                <div>
-                                    <div class="condition-name">MACD 金叉</div>
-                                    <div class="condition-desc">DIF (短軸) 逐漸由下往上穿過 DEA (慢線)，波段轉強。</div>
-                                </div>
-                            </label>
-                            <label class="checkbox-label" style="grid-column: 1 / -1;">
-                                <input type="checkbox" name="condition" value="macd_entanglement">
-                                <div>
-                                    <div class="condition-name">MACD 糾纏 (準備表態)</div>
-                                    <div class="condition-desc">近 4 日內 DIF 與 DEA 緊密貼合，籌碼沉澱完畢即將發動。</div>
-                                </div>
-                            </label>
-                        </div>
+            <!-- 右側：主內容區 (選股條件 + 類股掃描) -->
+            <div class="right-column">
+                <!-- 分析類股區塊 -->
+                <div class="glass-card sector-scan-card">
+                    <div class="card-title">
+                        <span class="icon">🏷️</span> 依類股批次掃描
                     </div>
-
-                    <div class="filter-section">
-                        <div class="filter-title"><span class="icon">🐻</span> 做空條件 (Bearish Signals)</div>
-                        <div class="filter-grid">
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="condition" value="price_below_ma20">
-                                <div>
-                                    <div class="condition-name">股價跌破月線 (MA20)</div>
-                                    <div class="condition-desc">收盤價小於 20 日移動平均線，中期趨勢可能轉弱。</div>
-                                </div>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="condition" value="kd_death_cross">
-                                <div>
-                                    <div class="condition-name">KD 死亡交叉</div>
-                                    <div class="condition-desc">K 值由上往下跌破 D 值，短線動能轉弱訊號。</div>
-                                </div>
-                            </label>
-                        </div>
+                    <div class="input-group">
+                        <select id="sectorSelect">
+                            <option value="">載入中...</option>
+                        </select>
+                        <button id="scanSectorBtn" class="btn-scan">開始類股掃描 🚀</button>
+                    </div>
+                    <div class="sector-hint">
+                        💡 選擇類股並搭配下方條件過濾
                     </div>
                 </div>
 
-                <div class="scan-actions">
-                    <button class="btn-scan" id="startScanBtn">開始掃描我的自選股 🚀</button>
+                <!-- 右側：選股條件與結果 -->
+                <div class="glass-card">
+                    <div class="card-title">
+                        <span class="icon">🎯</span> 多空條件過濾
+                    </div>
+
+                    <div id="filterForm">
+                        <div class="filter-section">
+                            <div class="filter-title"><span class="icon">🐂</span> 做多條件 (Bullish Signals)</div>
+                            <div class="filter-grid">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="condition" value="price_above_ma20">
+                                    <div>
+                                        <div class="condition-name">股價站上月線 (MA20)</div>
+                                        <div class="condition-desc">收盤價大於 20 日移動平均線，代表中期趨勢偏多。</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="condition" value="kd_golden_cross">
+                                    <div>
+                                        <div class="condition-name">KD 黃金交叉</div>
+                                        <div class="condition-desc">K 值由下往上突破 D 值，為短線動能轉強訊號。</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="condition" value="macd_histogram_positive">
+                                    <div>
+                                        <div class="condition-name">MACD 柱狀體翻紅</div>
+                                        <div class="condition-desc">MACD 柱狀體由負轉正，表示多方力道開始增強。</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-label full-width">
+                                    <input type="checkbox" name="condition" value="macd_golden_cross">
+                                    <div>
+                                        <div class="condition-name">MACD 金叉</div>
+                                        <div class="condition-desc">DIF (短軸) 逐漸由下往上穿過 DEA (慢線)，波段轉強。</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-label full-width">
+                                    <input type="checkbox" name="condition" value="macd_entanglement">
+                                    <div>
+                                        <div class="condition-name">MACD 糾纏 (準備表態)</div>
+                                        <div class="condition-desc">近 4 日內 DIF 與 DEA 緊密貼合，籌碼沉澱完畢即將發動。</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="filter-section">
+                            <div class="filter-title"><span class="icon">🐻</span> 做空條件 (Bearish Signals)</div>
+                            <div class="filter-grid">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="condition" value="price_below_ma20">
+                                    <div>
+                                        <div class="condition-name">股價跌破月線 (MA20)</div>
+                                        <div class="condition-desc">收盤價小於 20 日移動平均線，中期趨勢可能轉弱。</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" name="condition" value="kd_death_cross">
+                                    <div>
+                                        <div class="condition-name">KD 死亡交叉</div>
+                                        <div class="condition-desc">K 值由上往下跌破 D 值，短線動能轉弱訊號。</div>
+                                    </div>
+                                </label>
+                            </div>
+                            <div class="filter-section chip-section">
+                                <div class="filter-title"><span class="icon">💰</span> 籌碼面分析 (Chip Signals)</div>
+                                <div class="filter-grid">
+                                    <label class="checkbox-label full-width">
+                                        <input type="checkbox" name="condition" value="chip_golden_cross">
+                                        <div>
+                                            <div class="condition-name" style="color:var(--accent-red)">🔥 籌碼黃金交叉 (底部吃貨)
+                                            </div>
+                                            <div class="condition-desc">大戶持股比例上升、散戶持股比例下降，籌碼流向少數特定人。</div>
+                                        </div>
+                                    </label>
+                                    <label class="checkbox-label full-width">
+                                        <input type="checkbox" name="condition" value="chip_death_cross">
+                                        <div>
+                                            <div class="condition-name" style="color:var(--accent-green)">💀 籌碼死亡交叉
+                                                (高檔出貨)</div>
+                                            <div class="condition-desc">大戶持股比例下降、散戶持股比例上升，散戶正在接刀。</div>
+                                        </div>
+                                    </label>
+                                    <label class="checkbox-label full-width">
+                                        <input type="checkbox" name="condition" value="chip_divergence">
+                                        <div>
+                                            <div class="condition-name" style="color:#d97706">⚠️ 高檔籌碼背離</div>
+                                            <div class="condition-desc">股價處於月線之上，但大戶持股比例卻出現下滑，有拉高出貨疑慮。</div>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="scan-actions">
+                            <button class="btn-scan" id="startScanBtn">開始掃描我的自選股 🚀</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 掃描結果區塊 -->
+            <div class="glass-card result-card" id="resultContainer" style="display: none;">
+                <div class="card-title result-card-title">
+                    <span class="icon">📋</span> 掃描結果 (<span id="resultCount">0</span> 檔符合條件)
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table" id="resultTable">
+                        <thead>
+                            <tr>
+                                <th>股票代碼</th>
+                                <th>名稱</th>
+                                <th class="text-right">最新收盤價</th>
+                                <th class="text-right">月線(MA20)</th>
+                                <th class="text-center">KD 狀態</th>
+                                <th class="text-center">籌碼情境</th>
+                                <th class="text-center">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultBody">
+                            <!-- JS 動態生成 -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
 
-        <!-- 掃描結果區塊 -->
-        <div class="glass-card result-card" style="margin-top: 24px; display: none;" id="resultContainer">
-            <div class="card-title"
-                style="color: #60a5fa; border-bottom: 1px solid rgba(59, 130, 246, 0.2); padding-bottom: 12px;">
-                <span class="icon">📋</span> 掃描結果 (<span id="resultCount">0</span> 檔符合條件)
-            </div>
-            <div class="table-wrapper">
-                <table class="data-table" id="resultTable">
-                    <thead>
-                        <tr>
-                            <th>股票代碼</th>
-                            <th>名稱</th>
-                            <th style="text-align:right">最新收盤價</th>
-                            <th style="text-align:right">月線(MA20)</th>
-                            <th style="text-align:center">KD 狀態</th>
-                            <th style="text-align:center">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="resultBody">
-                        <!-- JS 動態生成 -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+        <!-- 背景特效 -->
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
 
-    <!-- 背景特效 -->
-    <div class="glow glow-1"></div>
-    <div class="glow glow-2"></div>
-
-    <script src="/js/watchlist.js"></script>
-    <script src="/js/screener.js"></script>
+        <script src="/js/common.js"></script>
+        <script src="/js/api.js"></script>
+        <script src="/js/watchlist.js"></script>
+        <script src="/js/screener.js"></script>
 </body>
 
 </html>

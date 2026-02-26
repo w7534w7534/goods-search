@@ -2,23 +2,42 @@
  * K 線圖 + 技術指標渲染 (ECharts)
  */
 
-// 全局 ECharts 實例
-let klineChartInstance = null;
-let indicatorChartInstance = null;
+// 統一由 common.js 的 ChartManager 管理
 
 // 目前的指標數據
 let indicatorData = null;
 let priceData = null;
 
-// resize 事件只綁定一次
+let hoveredChart = null;
 let _resizeBound = false;
+let _tooltipInteractiveBound = false;
+
+function _bindTooltipInteractiveSync() {
+    if (_tooltipInteractiveBound) return;
+    _tooltipInteractiveBound = true;
+
+    const kDom = document.getElementById('klineChart');
+    const iDom = document.getElementById('indicatorChart');
+
+    if (kDom) {
+        kDom.addEventListener('mouseenter', () => hoveredChart = 'kline');
+        kDom.addEventListener('mouseleave', () => { if (hoveredChart === 'kline') hoveredChart = null; });
+    }
+
+    if (iDom) {
+        iDom.addEventListener('mouseenter', () => hoveredChart = 'indicator');
+        iDom.addEventListener('mouseleave', () => { if (hoveredChart === 'indicator') hoveredChart = null; });
+    }
+}
+
 function _bindResizeOnce() {
     if (_resizeBound) return;
     _resizeBound = true;
     window.addEventListener('resize', () => {
-        klineChartInstance?.resize();
-        indicatorChartInstance?.resize();
+        ChartManager.resizeAll();
     });
+
+    _bindTooltipInteractiveSync();
 }
 
 // ============================================================
@@ -30,21 +49,19 @@ function initKlineChart(data, indicators) {
     indicatorData = indicators;
 
     const chartDom = document.getElementById('klineChart');
-    if (klineChartInstance) {
-        klineChartInstance.dispose();
-    }
-    klineChartInstance = echarts.init(chartDom);
+    ChartManager.init('klineChart', chartDom);
 
     renderKlineChart();
     _bindResizeOnce();
 }
 
 function renderKlineChart() {
-    if (!priceData || !indicatorData || !klineChartInstance) return;
+    const chart = ChartManager.get('klineChart');
+    if (!priceData || !indicatorData || !chart) return;
 
     const dates = priceData.map(d => d.date);
     const ohlc = priceData.map(d => [d.open, d.close, d.min, d.max]);
-    const volumes = priceData.map(d => d.Trading_Volume);
+    const volumes = priceData.map(d => Object.hasOwn(d, 'Trading_Volume') ? Math.round(d.Trading_Volume / 1000) : 0);
     const colors = priceData.map(d => d.close >= d.open ? '#ef4444' : '#10b981');
 
     const series = [
@@ -153,6 +170,12 @@ function renderKlineChart() {
     }
 
     const option = {
+        title: {
+            subtext: `資料擷取日期: ${dates[dates.length - 1] || '未知'}`,
+            right: 15,
+            top: 0,
+            subtextStyle: { color: '#64748b', fontSize: 11 }
+        },
         backgroundColor: 'transparent',
         animation: true,
         tooltip: {
@@ -165,6 +188,7 @@ function renderKlineChart() {
             borderColor: 'rgba(255,255,255,0.08)',
             textStyle: { color: '#f1f5f9', fontSize: 12 },
             formatter: function (params) {
+                if (hoveredChart === 'indicator') return '';
                 if (!params || !params.length) return '';
                 const date = params[0].axisValue;
                 let html = `<div style="font-weight:600;margin-bottom:6px;">${date}</div>`;
@@ -181,7 +205,7 @@ function renderKlineChart() {
                 }
                 const vol = params.find(p => p.seriesName === '成交量');
                 if (vol) {
-                    html += `<div>成交量: <b>${formatNumber(vol.data.value)}</b></div>`;
+                    html += `<div>成交量: <b>${Math.round(vol.data.value).toLocaleString()} 張</b></div>`;
                 }
                 // 其他指標
                 params.filter(p => !['K線', '成交量'].includes(p.seriesName)).forEach(p => {
@@ -232,6 +256,13 @@ function renderKlineChart() {
                 axisLine: { show: false },
                 axisLabel: { show: false },
                 splitLine: { show: false },
+                axisPointer: {
+                    label: {
+                        formatter: function (params) {
+                            return Math.round(params.value).toLocaleString() + ' 張';
+                        }
+                    }
+                }
             }
         ],
         dataZoom: [
@@ -257,7 +288,7 @@ function renderKlineChart() {
         series
     };
 
-    klineChartInstance.setOption(option, true);
+    chart.setOption(option, true);
 }
 
 // ============================================================
@@ -268,25 +299,22 @@ function initIndicatorChart(indicators) {
     indicatorData = indicators;
 
     const chartDom = document.getElementById('indicatorChart');
-    if (indicatorChartInstance) {
-        indicatorChartInstance.dispose();
-    }
-    indicatorChartInstance = echarts.init(chartDom);
+    ChartManager.init('indicatorChart', chartDom);
 
     renderIndicatorChart();
     _bindResizeOnce();
 }
 
 function renderIndicatorChart() {
-    if (!indicatorData || !indicatorChartInstance) return;
+    const chart = ChartManager.get('indicatorChart');
+    if (!indicatorData || !chart) return;
 
     const dates = indicatorData.date;
     const active = getActiveSubIndicators();
 
-    // 計算需要幾個子圖
     const gridCount = active.length;
     if (gridCount === 0) {
-        indicatorChartInstance.setOption({ series: [], grid: [], xAxis: [], yAxis: [] }, true);
+        chart.setOption({ series: [], grid: [], xAxis: [], yAxis: [] }, true);
         return;
     }
 
@@ -428,9 +456,15 @@ function renderIndicatorChart() {
     // 調整圖表容器高度
     const totalHeight = gridCount * (gridHeight + 30) + 60;
     document.getElementById('indicatorChart').style.height = totalHeight + 'px';
-    indicatorChartInstance.resize();
+    chart.resize();
 
     const option = {
+        title: {
+            subtext: `資料擷取日期: ${dates[dates.length - 1] || '未知'}`,
+            right: 15,
+            top: 0,
+            subtextStyle: { color: '#64748b', fontSize: 11 }
+        },
         backgroundColor: 'transparent',
         animation: true,
         tooltip: {
@@ -438,6 +472,26 @@ function renderIndicatorChart() {
             backgroundColor: 'rgba(17, 24, 39, 0.95)',
             borderColor: 'rgba(255,255,255,0.08)',
             textStyle: { color: '#f1f5f9', fontSize: 12 },
+            formatter: function (params) {
+                if (hoveredChart === 'kline') return '';
+                if (!params || !params.length) return '';
+                const date = params[0].axisValue;
+                let html = `<div style="font-weight:600;margin-bottom:6px;">${date}</div>`;
+                let hasData = false;
+                params.forEach(p => {
+                    const name = p.seriesName;
+                    if (!name || name === '零軸' || name.includes('超買') || name.includes('超賣')) return;
+                    if (p.data != null) {
+                        let val = p.data;
+                        if (typeof val === 'object' && val.value != null) val = val.value;
+                        if (typeof val === 'number') {
+                            html += `<div style="color:${p.color}"><span style="display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px;background-color:${p.color};"></span>${name}: <b style="margin-left:8px;color:#f1f5f9">${val.toFixed(2)}</b></div>`;
+                            hasData = true;
+                        }
+                    }
+                });
+                return hasData ? html : '';
+            }
         },
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
         grid: grids,
@@ -452,7 +506,7 @@ function renderIndicatorChart() {
         series,
     };
 
-    indicatorChartInstance.setOption(option, true);
+    chart.setOption(option, true);
 }
 
 // ============================================================

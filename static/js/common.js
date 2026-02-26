@@ -62,6 +62,43 @@ function isInWatchlist(stockId) {
 }
 
 // ============================================================
+// 圖表管理 (ECharts Instances Manager)
+// ============================================================
+
+window.ChartManager = {
+    instances: {},
+    init(id, dom) {
+        if (this.instances[id]) {
+            this.instances[id].dispose();
+        }
+        if (typeof echarts !== 'undefined' && dom) {
+            this.instances[id] = echarts.init(dom);
+            return this.instances[id];
+        }
+        return null;
+    },
+    get(id) {
+        return this.instances[id] || null;
+    },
+    resize(id) {
+        if (this.instances[id]) {
+            this.instances[id].resize();
+        }
+    },
+    resizeAll() {
+        Object.values(this.instances).forEach(chart => {
+            if (chart) chart.resize();
+        });
+    },
+    destroyAll() {
+        Object.values(this.instances).forEach(chart => {
+            if (chart) chart.dispose();
+        });
+        this.instances = {};
+    }
+};
+
+// ============================================================
 // 數字格式化
 // ============================================================
 

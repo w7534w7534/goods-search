@@ -3,9 +3,7 @@
  * 股利政策表格（含配息率）、營收趨勢圖、獲利能力圖、ROE/ROA 圖
  */
 
-let revenueChartInstance = null;
-let financialChartInstance = null;
-let profitabilityChartInstance = null;
+// 相關圖表實例由 common.js 中的 ChartManager 統一管理
 
 // ============================================================
 // 股利政策表格（含配息率）
@@ -119,7 +117,7 @@ function renderEpsTable(finData, priceData, adjData) {
                 if (pd >= startPrefix && pd <= endPrefix) {
                     let close = parseFloat(p.close || 0);
                     // 根據 FinMind API，成交量欄位通常是 Trading_Volume
-                    let volume = parseFloat(p.Trading_Volume || 0); 
+                    let volume = parseFloat(p.Trading_Volume || 0);
 
                     if (close > 0 && volume > 0) {
                         totalValue += (close * volume);
@@ -523,15 +521,14 @@ function renderProfitabilityMatrix(finData, bsData) {
 // ============================================================
 // 杜邦分析矩陣 (Dupont Analysis)
 // ============================================================
-let dupontChartInstance = null;
+// 杜邦分析圖表使用 ChartManager 處理
 
 function renderDupontAnalysis(finData, bsData) {
     const chartDom = document.getElementById('dupontChart');
     const tableDom = document.getElementById('dupontTable');
     if (!chartDom || !tableDom) return;
 
-    if (dupontChartInstance) dupontChartInstance.dispose();
-    dupontChartInstance = echarts.init(chartDom);
+    const chart = ChartManager.init('dupontChart', chartDom);
 
     if (!finData || finData.length === 0 || !bsData || bsData.length === 0) {
         chartDom.innerHTML = `<div class="empty-state"><div class="emoji">📭</div><p>資料不足以進行杜邦分析</p></div>`;
@@ -542,9 +539,9 @@ function renderDupontAnalysis(finData, bsData) {
     const dateSet = new Set();
     finData.forEach(d => dateSet.add((d.date || '').substring(0, 7)));
     bsData.forEach(d => dateSet.add((d.date || '').substring(0, 7)));
-    
+
     const allDates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
-    
+
     if (allDates.length === 0) {
         chartDom.innerHTML = `<div class="empty-state"><div class="emoji">📭</div><p>資料不足以進行杜邦分析</p></div>`;
         tableDom.innerHTML = '';
@@ -601,6 +598,12 @@ function renderDupontAnalysis(finData, bsData) {
     const equityMultiplierData = ascList.map(item => (item.equityMultiplier !== null ? item.equityMultiplier.toFixed(2) : '-'));
 
     const option = {
+        title: {
+            subtext: `資料年度/季別: ${ascList[ascList.length - 1]?.periodLabel || '未知'}`,
+            right: 15,
+            top: 0,
+            subtextStyle: { color: '#64748b', fontSize: 11 }
+        },
         backgroundColor: 'transparent',
         tooltip: {
             trigger: 'axis',
@@ -642,11 +645,11 @@ function renderDupontAnalysis(finData, bsData) {
         ],
         dataZoom: [
             { type: 'inside', start: 30, end: 100 },
-            { 
-                type: 'slider', 
-                start: 30, end: 100, 
-                height: 20, bottom: 0, 
-                borderColor: 'transparent', 
+            {
+                type: 'slider',
+                start: 30, end: 100,
+                height: 20, bottom: 0,
+                borderColor: 'transparent',
                 fillerColor: 'rgba(59, 130, 246, 0.15)',
                 handleStyle: { color: '#3b82f6' },
                 textStyle: { color: '#64748b' }
@@ -690,7 +693,7 @@ function renderDupontAnalysis(finData, bsData) {
             }
         ]
     };
-    dupontChartInstance.setOption(option);
+    chart.setOption(option);
 
     let tableHtml = `
         <table class="data-table" style="font-feature-settings: 'tnum';">
