@@ -681,6 +681,22 @@ def stock_margin():
 
     return api_ok(data)
 
+@app.route('/api/stock/holders/debug')
+def stock_holders_debug():
+    stock_id = request.args.get('id', '2330')
+    norway_url = f"https://norway.twsthr.info/StockHolders.aspx?stock={stock_id}"
+    norway_headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        resp = req.get(norway_url, headers=norway_headers, verify=False, timeout=15)
+        return api_ok({
+            "status_code": resp.status_code, 
+            "text": resp.text[:2000], 
+            "len": len(resp.text)
+        })
+    except Exception as e:
+        return api_error(str(e))
 
 @app.route('/api/stock/holders')
 def stock_holders():
