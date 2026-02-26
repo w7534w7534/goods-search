@@ -713,14 +713,22 @@ def stock_holders():
             resp = req.get(norway_url, headers=norway_headers, verify=False, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
-            detail_table = soup.find(id='Details')
-            if detail_table:
-                trs = detail_table.find_all('tr')
+            detail_tables = soup.find_all('table', id='Details')
+            target_table = None
+            for t in detail_tables:
+                trs = t.find_all('tr')
+                if len(trs) > 0 and '總股東' in trs[0].text:
+                    target_table = t
+                    break
+
+            if target_table:
+                trs = target_table.find_all('tr')
                 for tr in trs[1:]:  # 跳過表頭
                     tds = tr.find_all('td')
                     if len(tds) >= 14:
                         date_str = tds[2].text.strip()
-                        if len(date_str) == 8 and date_str.isdigit():
+                        # 確認 date_str 真的是日期格式 (YYYYMMDD)
+                        if len(date_str) == 8 and date_str.isdigit() and date_str.startswith('20'):
                             formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
                             total_holders = tds[4].text.strip().replace(',', '')
                             major_400_ratio = tds[7].text.strip()
