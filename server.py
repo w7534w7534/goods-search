@@ -742,7 +742,9 @@ def stock_holders():
                                 })
                             except ValueError:
                                 pass
-                if norway_data:
+                # 只有當抓取到的資料筆數大於等於 5 筆時才進行一天長度的快取
+                # 避免因網站短暫擋 IP 或解析失敗導致將空陣列快取 24 小時
+                if norway_data and len(norway_data) >= 5:
                     norway_cache.set(norway_cache_key, norway_data)
         except Exception as e:
             logger.error("神秘金字塔爬蟲 API 錯誤 [%s]: %s", stock_id, e)
