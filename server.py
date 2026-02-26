@@ -783,11 +783,21 @@ def stock_holders():
                     cols = row_div.find_all('div', recursive=False)
                     if len(cols) >= 5:
                         d_str = cols[0].text.strip().replace('/', '-')
-                        col3 = cols[3].text.strip().replace('%', '') # 散戶 (<50 張)
+                        c_foreign = cols[1].text.strip().replace('%', '').replace(',', '')
+                        c_major = cols[2].text.strip().replace('%', '').replace(',', '')
+                        c_director = cols[3].text.strip().replace('%', '').replace(',', '')
+                        c_price = cols[4].text.strip().replace(',', '')
                         if d_str:
+                            major_val = float(c_major) if c_major and c_major != '-' else 0
+                            # 粗估散戶比例 = 100 - 大戶比例
+                            retail_val = max(0, round(100 - major_val, 2)) if major_val > 0 else 0
                             yahoo_data.append({
                                 'date': d_str,
-                                'retail_ratio': float(col3) if col3 and col3 != '-' else 0
+                                'foreign_ratio': float(c_foreign) if c_foreign and c_foreign != '-' else 0,
+                                'major_ratio': major_val,
+                                'director_ratio': float(c_director) if c_director and c_director != '-' else 0,
+                                'price': float(c_price) if c_price and c_price != '-' else 0,
+                                'retail_ratio': retail_val
                             })
             if yahoo_data:
                 yahoo_cache.set(yahoo_cache_key, yahoo_data)
@@ -795,47 +805,76 @@ def stock_holders():
             logger.error("Yahoo 大戶籌碼 API 錯誤 [%s]: %s", stock_id, e)
 
     result = []
-    # 建立 Yahoo 散戶字典
+    # 建立 Yahoo 散戶字典 (使用從大戶推估的散戶估值)
     yahoo_dict = {item['date']: item['retail_ratio'] for item in yahoo_data}
 
-    # 以 norway_data 為主（最多取近 10 筆）
-    for item in norway_data[:10]:
-        d_str = item['date']
-        
-        # 尋找最近的交易日價格與外資持股 (因集保結算日通常在週五/週六，與交易日可能差 1~2 天)
-        closest_price = 0
-        closest_share = 0
-        closest_retail = 0
-        
-        # 往前找最多 5 天有資料的日子
-        target_date = datetime.strptime(d_str, "%Y-%m-%d")
-        for i in range(7):
-            check_date = (target_date - timedelta(days=i)).strftime("%Y-%m-%d")
-            if not closest_price and check_date in price_dict:
-                closest_price = price_dict[check_date]
-            if not closest_share and check_date in share_dict:
-                closest_share = share_dict[check_date]
-            if not closest_retail and check_date in yahoo_dict:
-                closest_retail = yahoo_dict[check_date]
-                
-        # 如果找不到，就用最新的一天
-        if not closest_price and price_dict:
-            closest_price = price_dict[list(price_dict.keys())[-1]]
-        if not closest_share and share_dict:
-            closest_share = share_dict[list(share_dict.keys())[-1]]
-        if not closest_retail and yahoo_dict:
-            closest_retail = yahoo_dict[list(yahoo_dict.keys())[-1]]
+    if norway_data:
+        # 以 norway_data 為主（最多取近 10 筆）
+        for item in norway_data[:10]:
+            d_str = item['date']
+            
+            # 尋找最近的交易日價格與外資持股
+            closest_price = 0
+            closest_share = 0
+            closest_retail = 0
+            
+            # 往前找最多 5 天有資料的日子
+            target_date = datetime.strptime(d_str, "%Y-%m-%d")
+            for i in range(7):
+                check_date = (target_date - timedelta(days=i)).strftime("%Y-%m-%d")
+                if not closest_price and check_date in price_dict:
+                    closest_price = price_dict[check_date]
+                if not closest_share and check_date in share_dict:
+                    closest_share = share_dict[check_date]
+                if not closest_retail and check_date in yahoo_dict:
+                    closest_retail = yahoo_dict[check_date]
+                    
+            # 如果找不到，就用最新的一天
+            if not closest_price and price_dict:
+                closest_price = price_dict[list(price_dict.keys())[-1]]
+            if not closest_share and share_dict:
+                closest_share = share_dict[list(share_dict.keys())[-1]]
+            if not closest_retail and yahoo_dict:
+                closest_retail = yahoo_dict[list(yahoo_dict.keys())[-1]]
 
-        result.append({
-            "date": d_str,
-            "foreign_ratio": closest_share,
-            "major_ratio": item['major_ratio'],           # >400張
-            "major_1000_ratio": item['major_1000_ratio'], # >1000張
-            "total_holders": item['total_holders'],       # 總股東人數
-            "director_ratio": 0, # 已棄用，保留相容
-            "retail_ratio": closest_retail,               # <50張
-            "price": closest_price
-        })
+            result.append({
+                "date": d_str,
+                "foreign_ratio": closest_share,
+                "major_ratio": item['major_ratio'],           # >400張
+                "major_1000_ratio": item['major_1000_ratio'], # >1000張
+                "total_holders": item['total_holders'],       # 總股東人數
+                "director_ratio": 0, # 已棄用，保留相容
+                "retail_ratio": closest_retail,               # <50張估算
+                "price": closest_price
+            })
+    else:
+        # 備援：若被 Cloudflare 阻擋，以 yahoo_data 為主
+        for item in yahoo_data[:10]:
+            d_str = item['date']
+            target_date = datetime.strptime(d_str, "%Y-%m-%d")
+            
+            # 確保外資持股與價格若缺少，從 share_dict 與 price_dict 補充
+            closest_share = item['foreign_ratio']
+            closest_price = item['price']
+            
+            if closest_share == 0 or closest_price == 0:
+                for i in range(7):
+                    check_date = (target_date - timedelta(days=i)).strftime("%Y-%m-%d")
+                    if closest_share == 0 and check_date in share_dict:
+                        closest_share = share_dict[check_date]
+                    if closest_price == 0 and check_date in price_dict:
+                        closest_price = price_dict[check_date]
+            
+            result.append({
+                "date": d_str,
+                "foreign_ratio": closest_share,
+                "major_ratio": item['major_ratio'],           # >400張
+                "major_1000_ratio": item['major_ratio'],      # 用 400 張代替 1000 張以避免前端出錯
+                "total_holders": 0,                           # 無資料
+                "director_ratio": item['director_ratio'],
+                "retail_ratio": item['retail_ratio'],
+                "price": closest_price
+            })
 
     return api_ok(result)
 
